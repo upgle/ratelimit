@@ -109,7 +109,8 @@ func (runner *Runner) Run() {
 		localCache = freecache.NewCache(s.LocalCacheSizeInBytes)
 	}
 
-	serverReporter := metrics.NewServerReporter(runner.statsManager.GetStatsStore().ScopeWithTags("ratelimit_server", s.ExtraTags))
+	metricReporter := metrics.NewStatsMetricReporter(runner.statsManager.GetStatsStore().ScopeWithTags("ratelimit_server", s.ExtraTags))
+	serverReporter := metrics.NewServerReporter(metricReporter)
 
 	srv := server.NewServer(s, "ratelimit", runner.statsManager, localCache, settings.GrpcUnaryInterceptor(serverReporter.UnaryServerInterceptor()))
 	runner.mu.Lock()

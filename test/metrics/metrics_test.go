@@ -16,7 +16,7 @@ import (
 func TestMetricsInterceptor(t *testing.T) {
 	mockSink := statsMock.NewSink()
 	statsStore := stats.NewStore(mockSink, false)
-	serverReporter := metrics.NewServerReporter(statsStore)
+	serverReporter := metrics.NewServerReporter(metrics.NewStatsMetricReporter(statsStore))
 
 	unaryInfo := &grpc.UnaryServerInfo{
 		FullMethod: "TestService/TestMethod",
@@ -44,7 +44,7 @@ func TestMetricsInterceptor(t *testing.T) {
 func TestMetricsInterceptor_Concurrent(t *testing.T) {
 	mockSink := statsMock.NewSink()
 	statsStore := stats.NewStore(mockSink, false)
-	serverReporter := metrics.NewServerReporter(statsStore)
+	serverReporter := metrics.NewServerReporter(metrics.NewStatsMetricReporter(statsStore))
 
 	unaryInfo := &grpc.UnaryServerInfo{
 		FullMethod: "TestService/TestMethod",

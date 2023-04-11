@@ -4,32 +4,31 @@ import (
 	"context"
 	"time"
 
-	stats "github.com/lyft/gostats"
 	"google.golang.org/grpc"
 )
 
 type serverMetrics struct {
-	totalRequests stats.Counter
-	responseTime  stats.Timer
+	totalRequests Counter
+	responseTime  Timer
 }
 
 // ServerReporter reports server-side metrics for ratelimit gRPC server
 type ServerReporter struct {
-	scope stats.Scope
+	reporter MetricReporter
 }
 
-func newServerMetrics(scope stats.Scope, fullMethod string) *serverMetrics {
+func newServerMetrics(reporter MetricReporter, fullMethod string) *serverMetrics {
 	_, methodName := splitMethodName(fullMethod)
 	ret := serverMetrics{}
-	ret.totalRequests = scope.NewCounter(methodName + ".total_requests")
-	ret.responseTime = scope.NewTimer(methodName + ".response_time")
+	ret.totalRequests = reporter.NewCounter(methodName + ".total_requests")
+	ret.responseTime = reporter.NewTimer(methodName + ".response_time")
 	return &ret
 }
 
 // NewServerReporter returns a ServerReporter object.
-func NewServerReporter(scope stats.Scope) *ServerReporter {
+func NewServerReporter(reporter MetricReporter) *ServerReporter {
 	return &ServerReporter{
-		scope: scope,
+		reporter: reporter,
 	}
 }
 
@@ -37,7 +36,7 @@ func NewServerReporter(scope stats.Scope) *ServerReporter {
 func (r *ServerReporter) UnaryServerInterceptor() func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 		start := time.Now()
-		s := newServerMetrics(r.scope, info.FullMethod)
+		s := newServerMetrics(r.reporter, info.FullMethod)
 		s.totalRequests.Inc()
 		resp, err := handler(ctx, req)
 		s.responseTime.AddValue(float64(time.Since(start).Milliseconds()))
