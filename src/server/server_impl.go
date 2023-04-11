@@ -5,6 +5,7 @@ import (
 	"context"
 	"expvar"
 	"fmt"
+	"github.com/envoyproxy/ratelimit/src/metrics"
 	"io"
 	"net"
 	"net/http"
@@ -52,13 +53,14 @@ type serverDebugListener struct {
 }
 
 type server struct {
-	httpAddress   string
-	grpcAddress   string
-	debugAddress  string
-	router        *mux.Router
-	grpcServer    *grpc.Server
-	store         gostats.Store
-	scope         gostats.Scope
+	httpAddress  string
+	grpcAddress  string
+	debugAddress string
+	router       *mux.Router
+	grpcServer   *grpc.Server
+	store        gostats.Store
+	//scope         gostats.Scope
+	reporter      metrics.MetricReporter
 	runtime       loader.IFace
 	debugListener serverDebugListener
 	httpServer    *http.Server
@@ -180,8 +182,8 @@ func (server *server) startGrpc() {
 	server.grpcServer.Serve(lis)
 }
 
-func (server *server) Scope() gostats.Scope {
-	return server.scope
+func (server *server) MetricReporter() metrics.MetricReporter {
+	return server.reporter
 }
 
 func (server *server) Runtime() loader.IFace {
@@ -228,10 +230,11 @@ func newServer(s settings.Settings, name string, statsManager stats.Manager, loc
 
 	// setup stats
 	ret.store = statsManager.GetStatsStore()
-	ret.scope = ret.store.ScopeWithTags(name, s.ExtraTags)
-	ret.store.AddStatGenerator(gostats.NewRuntimeStats(ret.scope.Scope("go")))
+	scope := ret.store.ScopeWithTags(name, s.ExtraTags)
+	ret.reporter = metrics.NewStatsMetricReporter(ret.store.ScopeWithTags(name, s.ExtraTags))
+	ret.store.AddStatGenerator(gostats.NewRuntimeStats(scope.Scope("go")))
 	if localCache != nil {
-		ret.store.AddStatGenerator(limiter.NewLocalCacheStats(localCache, ret.scope.Scope("localcache")))
+		ret.store.AddStatGenerator(limiter.NewLocalCacheStats(localCache, scope.Scope("localcache")))
 	}
 
 	// setup runtime

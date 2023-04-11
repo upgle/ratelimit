@@ -3,10 +3,10 @@ package redis
 import (
 	"crypto/tls"
 	"fmt"
+	"github.com/envoyproxy/ratelimit/src/metrics"
 	"strings"
 	"time"
 
-	stats "github.com/lyft/gostats"
 	"github.com/mediocregopher/radix/v3"
 	"github.com/mediocregopher/radix/v3/trace"
 	logger "github.com/sirupsen/logrus"
@@ -16,16 +16,16 @@ import (
 )
 
 type poolStats struct {
-	connectionActive stats.Gauge
-	connectionTotal  stats.Counter
-	connectionClose  stats.Counter
+	connectionActive metrics.Gauge
+	connectionTotal  metrics.Counter
+	connectionClose  metrics.Counter
 }
 
-func newPoolStats(scope stats.Scope) poolStats {
+func newPoolStats(reporter metrics.MetricReporter) poolStats {
 	ret := poolStats{}
-	ret.connectionActive = scope.NewGauge("cx_active")
-	ret.connectionTotal = scope.NewCounter("cx_total")
-	ret.connectionClose = scope.NewCounter("cx_local_close")
+	ret.connectionActive = reporter.NewGauge("cx_active")
+	ret.connectionTotal = reporter.NewCounter("cx_total")
+	ret.connectionClose = reporter.NewCounter("cx_local_close")
 	return ret
 }
 
@@ -64,7 +64,7 @@ func checkError(err error) {
 	}
 }
 
-func NewClientImpl(scope stats.Scope, useTls bool, auth, redisSocketType, redisType, url string, poolSize int,
+func NewClientImpl(reporter metrics.MetricReporter, useTls bool, auth, redisSocketType, redisType, url string, poolSize int,
 	pipelineWindow time.Duration, pipelineLimit int, tlsConfig *tls.Config, healthCheckActiveConnection bool, srv server.Server) Client {
 	maskedUrl := utils.MaskCredentialsInUrl(url)
 	logger.Warnf("connecting to redis on %s with pool size %d", maskedUrl, poolSize)
@@ -90,7 +90,7 @@ func NewClientImpl(scope stats.Scope, useTls bool, auth, redisSocketType, redisT
 		return radix.Dial(network, addr, dialOpts...)
 	}
 
-	stats := newPoolStats(scope)
+	stats := newPoolStats(reporter)
 
 	opts := []radix.PoolOpt{radix.PoolConnFunc(df), radix.PoolWithTrace(poolTrace(&stats, healthCheckActiveConnection, srv))}
 

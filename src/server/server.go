@@ -1,12 +1,12 @@
 package server
 
 import (
+	"github.com/envoyproxy/ratelimit/src/metrics"
 	"net/http"
 
 	pb "github.com/envoyproxy/go-control-plane/envoy/service/ratelimit/v3"
 
 	"github.com/lyft/goruntime/loader"
-	stats "github.com/lyft/gostats"
 	"google.golang.org/grpc"
 )
 
@@ -21,7 +21,7 @@ type Server interface {
 	/**
 	 * Returns the root of the stats tree for the server
 	 */
-	Scope() stats.Scope
+	MetricReporter() metrics.MetricReporter
 
 	/**
 	 * Add an HTTP endpoint to the local debug port.

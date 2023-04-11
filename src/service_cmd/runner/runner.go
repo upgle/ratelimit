@@ -67,7 +67,7 @@ func createLimiter(srv server.Server, s settings.Settings, localCache *freecache
 			utils.NewTimeSourceImpl(),
 			rand.New(utils.NewLockedSource(time.Now().Unix())),
 			localCache,
-			srv.Scope(),
+			srv.MetricReporter(),
 			statsManager)
 	default:
 		logger.Fatalf("Invalid setting for BackendType: %s", s.BackendType)

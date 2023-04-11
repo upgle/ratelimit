@@ -17,6 +17,7 @@ package memcached
 
 import (
 	"context"
+	"github.com/envoyproxy/ratelimit/src/metrics"
 	"math/rand"
 	"strconv"
 	"sync"
@@ -28,10 +29,8 @@ import (
 
 	"github.com/envoyproxy/ratelimit/src/stats"
 
-	"github.com/coocood/freecache"
-	gostats "github.com/lyft/gostats"
-
 	"github.com/bradfitz/gomemcache/memcache"
+	"github.com/coocood/freecache"
 
 	logger "github.com/sirupsen/logrus"
 
@@ -303,9 +302,9 @@ func NewRateLimitCacheImpl(client Client, timeSource utils.TimeSource, jitterRan
 }
 
 func NewRateLimitCacheImplFromSettings(s settings.Settings, timeSource utils.TimeSource, jitterRand *rand.Rand,
-	localCache *freecache.Cache, scope gostats.Scope, statsManager stats.Manager) limiter.RateLimitCache {
+	localCache *freecache.Cache, reporter metrics.MetricReporter, statsManager stats.Manager) limiter.RateLimitCache {
 	return NewRateLimitCacheImpl(
-		CollectStats(newMemcacheFromSettings(s), scope.Scope("memcache")),
+		CollectStats(newMemcacheFromSettings(s), reporter.Scope("memcache")),
 		timeSource,
 		jitterRand,
 		s.ExpirationJitterMaxSeconds,

@@ -2,37 +2,37 @@ package memcached
 
 import (
 	"github.com/bradfitz/gomemcache/memcache"
-	stats "github.com/lyft/gostats"
+	"github.com/envoyproxy/ratelimit/src/metrics"
 )
 
 type statsCollectingClient struct {
 	c Client
 
-	multiGetSuccess  stats.Counter
-	multiGetError    stats.Counter
-	incrementSuccess stats.Counter
-	incrementMiss    stats.Counter
-	incrementError   stats.Counter
-	addSuccess       stats.Counter
-	addError         stats.Counter
-	addNotStored     stats.Counter
-	keysRequested    stats.Counter
-	keysFound        stats.Counter
+	multiGetSuccess  metrics.Counter
+	multiGetError    metrics.Counter
+	incrementSuccess metrics.Counter
+	incrementMiss    metrics.Counter
+	incrementError   metrics.Counter
+	addSuccess       metrics.Counter
+	addError         metrics.Counter
+	addNotStored     metrics.Counter
+	keysRequested    metrics.Counter
+	keysFound        metrics.Counter
 }
 
-func CollectStats(c Client, scope stats.Scope) Client {
+func CollectStats(c Client, reporter metrics.MetricReporter) Client {
 	return statsCollectingClient{
 		c:                c,
-		multiGetSuccess:  scope.NewCounterWithTags("multiget", map[string]string{"code": "success"}),
-		multiGetError:    scope.NewCounterWithTags("multiget", map[string]string{"code": "error"}),
-		incrementSuccess: scope.NewCounterWithTags("increment", map[string]string{"code": "success"}),
-		incrementMiss:    scope.NewCounterWithTags("increment", map[string]string{"code": "miss"}),
-		incrementError:   scope.NewCounterWithTags("increment", map[string]string{"code": "error"}),
-		addSuccess:       scope.NewCounterWithTags("add", map[string]string{"code": "success"}),
-		addError:         scope.NewCounterWithTags("add", map[string]string{"code": "error"}),
-		addNotStored:     scope.NewCounterWithTags("add", map[string]string{"code": "not_stored"}),
-		keysRequested:    scope.NewCounter("keys_requested"),
-		keysFound:        scope.NewCounter("keys_found"),
+		multiGetSuccess:  reporter.NewCounterWithTags("multiget", map[string]string{"code": "success"}),
+		multiGetError:    reporter.NewCounterWithTags("multiget", map[string]string{"code": "error"}),
+		incrementSuccess: reporter.NewCounterWithTags("increment", map[string]string{"code": "success"}),
+		incrementMiss:    reporter.NewCounterWithTags("increment", map[string]string{"code": "miss"}),
+		incrementError:   reporter.NewCounterWithTags("increment", map[string]string{"code": "error"}),
+		addSuccess:       reporter.NewCounterWithTags("add", map[string]string{"code": "success"}),
+		addError:         reporter.NewCounterWithTags("add", map[string]string{"code": "error"}),
+		addNotStored:     reporter.NewCounterWithTags("add", map[string]string{"code": "not_stored"}),
+		keysRequested:    reporter.NewCounter("keys_requested"),
+		keysFound:        reporter.NewCounter("keys_found"),
 	}
 }
 
