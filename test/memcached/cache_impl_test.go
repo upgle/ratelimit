@@ -6,6 +6,7 @@ package memcached_test
 
 import (
 	"context"
+	"github.com/envoyproxy/ratelimit/src/metrics"
 	"math/rand"
 	"strconv"
 	"testing"
@@ -620,6 +621,7 @@ func TestNewRateLimitCacheImplFromSettingsWhenSrvCannotBeResolved(t *testing.T) 
 
 	timeSource := mock_utils.NewMockTimeSource(controller)
 	statsStore := stats.NewStore(stats.NewNullSink(), false)
+	metricReporter := metrics.NewStatsMetricReporter(statsStore)
 
 	var s settings.Settings
 	s.NearLimitRatio = 0.8
@@ -628,7 +630,7 @@ func TestNewRateLimitCacheImplFromSettingsWhenSrvCannotBeResolved(t *testing.T) 
 	s.MemcacheSrv = "_something._tcp.example.invalid"
 
 	assert.Panics(func() {
-		memcached.NewRateLimitCacheImplFromSettings(s, timeSource, nil, nil, statsStore, mockstats.NewMockStatManager(statsStore))
+		memcached.NewRateLimitCacheImplFromSettings(s, timeSource, nil, nil, metricReporter, mockstats.NewMockStatManager(statsStore))
 	})
 }
 
@@ -639,6 +641,7 @@ func TestNewRateLimitCacheImplFromSettingsWhenHostAndPortAndSrvAreBothSet(t *tes
 
 	timeSource := mock_utils.NewMockTimeSource(controller)
 	statsStore := stats.NewStore(stats.NewNullSink(), false)
+	metricReporter := metrics.NewStatsMetricReporter(statsStore)
 
 	var s settings.Settings
 	s.NearLimitRatio = 0.8
@@ -648,7 +651,7 @@ func TestNewRateLimitCacheImplFromSettingsWhenHostAndPortAndSrvAreBothSet(t *tes
 	s.MemcacheHostPort = []string{"example.org:11211"}
 
 	assert.Panics(func() {
-		memcached.NewRateLimitCacheImplFromSettings(s, timeSource, nil, nil, statsStore, mockstats.NewMockStatManager(statsStore))
+		memcached.NewRateLimitCacheImplFromSettings(s, timeSource, nil, nil, metricReporter, mockstats.NewMockStatManager(statsStore))
 	})
 }
 

@@ -2,6 +2,7 @@ package memcached_test
 
 import (
 	"errors"
+	"github.com/envoyproxy/ratelimit/src/metrics"
 	"testing"
 
 	"github.com/bradfitz/gomemcache/memcache"
@@ -44,8 +45,9 @@ func TestStats_MultiGet(t *testing.T) {
 	defer controller.Finish()
 	client := mock_memcached.NewMockClient(controller)
 	statsStore := stats.NewStore(fakeSink, false)
+	metricReporter := metrics.NewStatsMetricReporter(statsStore)
 
-	sc := memcached.CollectStats(client, statsStore)
+	sc := memcached.CollectStats(client, metricReporter)
 
 	returnValue := map[string]*memcache.Item{"foo": nil}
 	arg := []string{"foo"}
@@ -118,8 +120,9 @@ func TestStats_Increment(t *testing.T) {
 	defer controller.Finish()
 	client := mock_memcached.NewMockClient(controller)
 	statsStore := stats.NewStore(fakeSink, false)
+	metricReporter := metrics.NewStatsMetricReporter(statsStore)
 
-	sc := memcached.CollectStats(client, statsStore)
+	sc := memcached.CollectStats(client, metricReporter)
 
 	fakeSink.Reset()
 	client.EXPECT().Increment("foo", uint64(5)).Return(uint64(6), nil)
@@ -162,8 +165,9 @@ func TestStats_Add(t *testing.T) {
 	defer controller.Finish()
 	client := mock_memcached.NewMockClient(controller)
 	statsStore := stats.NewStore(fakeSink, false)
+	metricReporter := metrics.NewStatsMetricReporter(statsStore)
 
-	sc := memcached.CollectStats(client, statsStore)
+	sc := memcached.CollectStats(client, metricReporter)
 	item := &memcache.Item{}
 
 	fakeSink.Reset()

@@ -2,6 +2,7 @@ package redis_test
 
 import (
 	"fmt"
+	"github.com/envoyproxy/ratelimit/src/metrics"
 	"testing"
 	"time"
 
@@ -36,9 +37,10 @@ func testNewClientImpl(t *testing.T, pipelineWindow time.Duration, pipelineLimit
 	return func(t *testing.T) {
 		redisAuth := "123"
 		statsStore := stats.NewStore(stats.NewNullSink(), false)
+		metricReporter := metrics.NewStatsMetricReporter(statsStore)
 
 		mkRedisClient := func(auth, addr string) redis.Client {
-			return redis.NewClientImpl(statsStore, false, auth, "tcp", "single", addr, 1, pipelineWindow, pipelineLimit, nil, false, nil)
+			return redis.NewClientImpl(metricReporter, false, auth, "tcp", "single", addr, 1, pipelineWindow, pipelineLimit, nil, false, nil)
 		}
 
 		t.Run("connection refused", func(t *testing.T) {
@@ -129,9 +131,10 @@ func TestNewClientImpl(t *testing.T) {
 
 func TestDoCmd(t *testing.T) {
 	statsStore := stats.NewStore(stats.NewNullSink(), false)
+	metricReporter := metrics.NewStatsMetricReporter(statsStore)
 
 	mkRedisClient := func(addr string) redis.Client {
-		return redis.NewClientImpl(statsStore, false, "", "tcp", "single", addr, 1, 0, 0, nil, false, nil)
+		return redis.NewClientImpl(metricReporter, false, "", "tcp", "single", addr, 1, 0, 0, nil, false, nil)
 	}
 
 	t.Run("SETGET ok", func(t *testing.T) {
@@ -174,9 +177,10 @@ func TestDoCmd(t *testing.T) {
 func testPipeDo(t *testing.T, pipelineWindow time.Duration, pipelineLimit int) func(t *testing.T) {
 	return func(t *testing.T) {
 		statsStore := stats.NewStore(stats.NewNullSink(), false)
+		metricReporter := metrics.NewStatsMetricReporter(statsStore)
 
 		mkRedisClient := func(addr string) redis.Client {
-			return redis.NewClientImpl(statsStore, false, "", "tcp", "single", addr, 1, pipelineWindow, pipelineLimit, nil, false, nil)
+			return redis.NewClientImpl(metricReporter, false, "", "tcp", "single", addr, 1, pipelineWindow, pipelineLimit, nil, false, nil)
 		}
 
 		t.Run("SETGET ok", func(t *testing.T) {
