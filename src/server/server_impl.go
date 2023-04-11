@@ -53,13 +53,12 @@ type serverDebugListener struct {
 }
 
 type server struct {
-	httpAddress  string
-	grpcAddress  string
-	debugAddress string
-	router       *mux.Router
-	grpcServer   *grpc.Server
-	store        gostats.Store
-	//scope         gostats.Scope
+	httpAddress   string
+	grpcAddress   string
+	debugAddress  string
+	router        *mux.Router
+	grpcServer    *grpc.Server
+	store         gostats.Store
 	reporter      metrics.MetricReporter
 	runtime       loader.IFace
 	debugListener serverDebugListener
