@@ -190,6 +190,29 @@ type Settings struct {
 	// See RedisPoolOnEmptyWaitDuration for details.
 	RedisPerSecondPoolOnEmptyWaitDuration time.Duration `envconfig:"REDIS_PERSECOND_POOL_ON_EMPTY_WAIT_DURATION" default:"1s"`
 
+	// Hot Key Detection settings
+	// HotKeyDetectionEnabled enables hot key detection using Count-Min Sketch.
+	// When enabled, frequently accessed keys are detected and batched with a configurable flush window.
+	HotKeyDetectionEnabled bool `envconfig:"HOT_KEY_DETECTION_ENABLED" default:"false"`
+	// HotKeySketchMemoryBytes is the memory budget for the Count-Min Sketch in bytes.
+	// Larger values provide more accurate frequency estimation. Default is 10MB.
+	HotKeySketchMemoryBytes int `envconfig:"HOT_KEY_SKETCH_MEMORY_BYTES" default:"10485760"`
+	// HotKeySketchDepth is the number of hash functions (rows) in the Count-Min Sketch.
+	// More depth reduces error rate but increases memory usage. Typical values are 4-5.
+	HotKeySketchDepth int `envconfig:"HOT_KEY_SKETCH_DEPTH" default:"4"`
+	// HotKeyThreshold is the frequency threshold to consider a key as "hot".
+	// Keys with estimated frequency >= this value are considered hot.
+	HotKeyThreshold uint32 `envconfig:"HOT_KEY_THRESHOLD" default:"100"`
+	// HotKeyMaxCount is the maximum number of hot keys to track.
+	// When exceeded, least recently used hot keys are evicted.
+	HotKeyMaxCount int `envconfig:"HOT_KEY_MAX_COUNT" default:"10000"`
+	// HotKeyFlushWindow is the time window for batching hot key operations.
+	// Hot keys are batched and flushed to Redis at this interval. Default is 100 microseconds.
+	HotKeyFlushWindow time.Duration `envconfig:"HOT_KEY_FLUSH_WINDOW" default:"100us"`
+	// HotKeyDecayInterval is the interval for decaying Count-Min Sketch counters.
+	// This helps adapt to changing traffic patterns. Default is 10 seconds.
+	HotKeyDecayInterval time.Duration `envconfig:"HOT_KEY_DECAY_INTERVAL" default:"10s"`
+
 	// Memcache settings
 	MemcacheHostPort []string `envconfig:"MEMCACHE_HOST_PORT" default:""`
 	// MemcacheMaxIdleConns sets the maximum number of idle TCP connections per memcached node.
