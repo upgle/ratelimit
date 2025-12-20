@@ -28,7 +28,21 @@ func NewRateLimiterCacheImplFromSettings(s settings.Settings, localCache *freeca
 		s.RedisPoolOnEmptyBehavior, s.RedisSentinelAuth)
 	closer.Closers = append(closer.Closers, otherPool)
 
-	return NewFixedRateLimitCacheImpl(
+	// Configure hot key detection if enabled
+	var hotKeyConfig *HotKeyConfig
+	if s.HotKeyDetectionEnabled {
+		hotKeyConfig = &HotKeyConfig{
+			Enabled:           true,
+			SketchMemoryBytes: s.HotKeySketchMemoryBytes,
+			SketchDepth:       s.HotKeySketchDepth,
+			Threshold:         s.HotKeyThreshold,
+			MaxHotKeys:        s.HotKeyMaxCount,
+			FlushWindow:       s.HotKeyFlushWindow,
+			DecayInterval:     s.HotKeyDecayInterval,
+		}
+	}
+
+	cache := NewFixedRateLimitCacheImpl(
 		otherPool,
 		perSecondPool,
 		timeSource,
@@ -39,5 +53,13 @@ func NewRateLimiterCacheImplFromSettings(s settings.Settings, localCache *freeca
 		s.CacheKeyPrefix,
 		statsManager,
 		s.StopCacheKeyIncrementWhenOverlimit,
-	), closer
+		hotKeyConfig,
+	)
+
+	// Add cache closer for hot key batchers
+	if cacheCloser, ok := cache.(io.Closer); ok {
+		closer.Closers = append(closer.Closers, cacheCloser)
+	}
+
+	return cache, closer
 }

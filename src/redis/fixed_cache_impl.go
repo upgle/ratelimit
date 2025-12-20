@@ -1,7 +1,9 @@
 package redis
 
 import (
+	"io"
 	"math/rand"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -30,6 +32,22 @@ type fixedRateLimitCacheImpl struct {
 	perSecondClient                    Client
 	stopCacheKeyIncrementWhenOverlimit bool
 	baseRateLimiter                    *limiter.BaseRateLimiter
+
+	// Hot key detection and batching
+	hotKeyDetector   *HotKeyDetector
+	hotKeyBatcher    *HotKeyBatcher
+	perSecondBatcher *HotKeyBatcher
+}
+
+// HotKeyConfig holds configuration for hot key detection and batching.
+type HotKeyConfig struct {
+	Enabled           bool
+	SketchMemoryBytes int
+	SketchDepth       int
+	Threshold         uint32
+	MaxHotKeys        int
+	FlushWindow       time.Duration
+	DecayInterval     time.Duration
 }
 
 func pipelineAppend(client Client, pipeline *Pipeline, key string, hitsAddend uint64, result *uint64, expirationSeconds int64) {
@@ -157,6 +175,9 @@ func (this *fixedRateLimitCacheImpl) DoLimit(
 		}
 	}
 
+	// Track hot key result channels for async results
+	hotKeyResultChans := make(map[int]<-chan HotKeyBatcherResult)
+
 	// Now, actually setup the pipeline to increase the usage of cache key, skipping empty cache keys.
 	for i, cacheKey := range cacheKeys {
 		if cacheKey.Key == "" || overlimitIndexes[i] {
@@ -170,19 +191,35 @@ func (this *fixedRateLimitCacheImpl) DoLimit(
 			expirationSeconds += this.baseRateLimiter.JitterRand.Int63n(this.baseRateLimiter.ExpirationJitterMaxSeconds)
 		}
 
+		hitsAddend := this.getHitsAddend(hitsAddends[i], isCacheKeyOverlimit, isCacheKeyNearlimit, nearlimitIndexes[i])
+
 		// Use the perSecondConn if it is not nil and the cacheKey represents a per second Limit.
 		if this.perSecondClient != nil && cacheKey.PerSecond {
-			if perSecondPipeline == nil {
-				perSecondPipeline = Pipeline{}
+			// Check if this is a hot key and should be batched
+			if this.hotKeyDetector != nil && this.perSecondBatcher != nil && this.hotKeyDetector.RecordAccess(cacheKey.Key) {
+				// Hot key: submit to batcher for 300us flush window
+				logger.Debugf("hot key detected (per-second): %s", cacheKey.Key)
+				hotKeyResultChans[i] = this.perSecondBatcher.Submit(cacheKey.Key, hitsAddend, expirationSeconds)
+			} else {
+				// Normal key: add to pipeline
+				if perSecondPipeline == nil {
+					perSecondPipeline = Pipeline{}
+				}
+				pipelineAppend(this.perSecondClient, &perSecondPipeline, cacheKey.Key, hitsAddend, &results[i], expirationSeconds)
 			}
-			pipelineAppend(this.perSecondClient, &perSecondPipeline, cacheKey.Key, this.getHitsAddend(hitsAddends[i],
-				isCacheKeyOverlimit, isCacheKeyNearlimit, nearlimitIndexes[i]), &results[i], expirationSeconds)
 		} else {
-			if pipeline == nil {
-				pipeline = Pipeline{}
+			// Check if this is a hot key and should be batched
+			if this.hotKeyDetector != nil && this.hotKeyBatcher != nil && this.hotKeyDetector.RecordAccess(cacheKey.Key) {
+				// Hot key: submit to batcher for 300us flush window
+				logger.Debugf("hot key detected: %s", cacheKey.Key)
+				hotKeyResultChans[i] = this.hotKeyBatcher.Submit(cacheKey.Key, hitsAddend, expirationSeconds)
+			} else {
+				// Normal key: add to pipeline
+				if pipeline == nil {
+					pipeline = Pipeline{}
+				}
+				pipelineAppend(this.client, &pipeline, cacheKey.Key, hitsAddend, &results[i], expirationSeconds)
 			}
-			pipelineAppend(this.client, &pipeline, cacheKey.Key, this.getHitsAddend(hitsAddends[i], isCacheKeyOverlimit,
-				isCacheKeyNearlimit, nearlimitIndexes[i]), &results[i], expirationSeconds)
 		}
 	}
 
@@ -191,6 +228,7 @@ func (this *fixedRateLimitCacheImpl) DoLimit(
 		trace.WithAttributes(
 			attribute.Int("pipeline length", len(pipeline)),
 			attribute.Int("perSecondPipeline length", len(perSecondPipeline)),
+			attribute.Int("hotKeyBatched count", len(hotKeyResultChans)),
 		),
 	)
 	defer span.End()
@@ -200,6 +238,15 @@ func (this *fixedRateLimitCacheImpl) DoLimit(
 	}
 	if perSecondPipeline != nil {
 		checkError(this.perSecondClient.PipeDo(perSecondPipeline))
+	}
+
+	// Wait for hot key batched results
+	for i, resultChan := range hotKeyResultChans {
+		batchResult := <-resultChan
+		if batchResult.Err != nil {
+			checkError(batchResult.Err)
+		}
+		results[i] = batchResult.Value
 	}
 
 	// Now fetch the pipeline.
@@ -220,17 +267,60 @@ func (this *fixedRateLimitCacheImpl) DoLimit(
 	return responseDescriptorStatuses
 }
 
-// Flush() is a no-op with redis since quota reads and updates happen synchronously.
-func (this *fixedRateLimitCacheImpl) Flush() {}
+// Flush flushes any pending hot key batches.
+func (this *fixedRateLimitCacheImpl) Flush() {
+	// Hot key batchers are flushed automatically on their timer,
+	// but we can trigger a manual flush if needed.
+}
+
+// Close stops the hot key batchers.
+func (this *fixedRateLimitCacheImpl) Close() error {
+	if this.hotKeyBatcher != nil {
+		this.hotKeyBatcher.Stop()
+	}
+	if this.perSecondBatcher != nil {
+		this.perSecondBatcher.Stop()
+	}
+	return nil
+}
+
+// Ensure fixedRateLimitCacheImpl implements io.Closer
+var _ io.Closer = (*fixedRateLimitCacheImpl)(nil)
 
 func NewFixedRateLimitCacheImpl(client Client, perSecondClient Client, timeSource utils.TimeSource,
 	jitterRand *rand.Rand, expirationJitterMaxSeconds int64, localCache *freecache.Cache, nearLimitRatio float32, cacheKeyPrefix string, statsManager stats.Manager,
-	stopCacheKeyIncrementWhenOverlimit bool,
+	stopCacheKeyIncrementWhenOverlimit bool, hotKeyConfig *HotKeyConfig,
 ) limiter.RateLimitCache {
-	return &fixedRateLimitCacheImpl{
+	impl := &fixedRateLimitCacheImpl{
 		client:                             client,
 		perSecondClient:                    perSecondClient,
 		stopCacheKeyIncrementWhenOverlimit: stopCacheKeyIncrementWhenOverlimit,
 		baseRateLimiter:                    limiter.NewBaseRateLimit(timeSource, jitterRand, expirationJitterMaxSeconds, localCache, nearLimitRatio, cacheKeyPrefix, statsManager),
 	}
+
+	// Initialize hot key detection if enabled
+	if hotKeyConfig != nil && hotKeyConfig.Enabled {
+		detectorConfig := HotKeyDetectorConfig{
+			SketchMemoryBytes: hotKeyConfig.SketchMemoryBytes,
+			SketchDepth:       hotKeyConfig.SketchDepth,
+			HotThreshold:      hotKeyConfig.Threshold,
+			MaxHotKeys:        hotKeyConfig.MaxHotKeys,
+			DecayInterval:     hotKeyConfig.DecayInterval,
+			DecayFactor:       0.5,
+		}
+		impl.hotKeyDetector = NewHotKeyDetector(detectorConfig)
+
+		impl.hotKeyBatcher = NewHotKeyBatcher(client, hotKeyConfig.FlushWindow)
+		impl.hotKeyBatcher.Start()
+
+		if perSecondClient != nil {
+			impl.perSecondBatcher = NewHotKeyBatcher(perSecondClient, hotKeyConfig.FlushWindow)
+			impl.perSecondBatcher.Start()
+		}
+
+		logger.Warnf("Hot key detection enabled with threshold=%d, flush_window=%v, sketch_memory=%d bytes",
+			hotKeyConfig.Threshold, hotKeyConfig.FlushWindow, hotKeyConfig.SketchMemoryBytes)
+	}
+
+	return impl
 }
