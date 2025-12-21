@@ -1,0 +1,55 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+  external_labels:
+    cluster: 'perf-test'
+    monitor: 'ratelimit-perf'
+
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Redis Standalone
+  - job_name: 'redis-standalone'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+        labels:
+          backend: 'redis'
+          type: 'standalone'
+          instance_name: 'redis-standalone'
+
+  # Redis Cluster Nodes
+  - job_name: 'redis-cluster'
+    static_configs:
+      - targets:
+          - 'redis-cluster-exporter-1:9121'
+          - 'redis-cluster-exporter-2:9121'
+          - 'redis-cluster-exporter-3:9121'
+        labels:
+          backend: 'redis'
+          type: 'cluster'
+
+  # Memcached
+  - job_name: 'memcached'
+    static_configs:
+      - targets: ['memcached-exporter:9150']
+        labels:
+          backend: 'memcached'
+          type: 'standalone'
+          instance_name: 'memcached'
+
+  # cAdvisor - Container Metrics
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+        labels:
+          monitor: 'container-metrics'
+
+  # Ratelimit service (if running inside docker)
+  - job_name: 'ratelimit'
+    static_configs:
+      - targets: ['host.docker.internal:6070']
+        labels:
+          service: 'ratelimit'
