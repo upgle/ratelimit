@@ -29,3 +29,18 @@ descriptors:
     rate_limit:
       unit: day
       requests_per_unit: 20
+
+  - key: key5
+    rate_limit:
+      unit: day
+      requests_per_unit: 20
+
+  - key: key6
+    rate_limit:
+      unit: day
+      requests_per_unit: 20
+
+  - key: key7
+    rate_limit:
+      unit: day
+      requests_per_unit: 20

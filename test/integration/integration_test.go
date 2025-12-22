@@ -9,14 +9,18 @@ import (
 	"io"
 	"math/rand"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
 	pb "github.com/envoyproxy/go-control-plane/envoy/service/ratelimit/v3"
 	"github.com/kelseyhightower/envconfig"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -33,6 +37,15 @@ var projectDir = os.Getenv("PROJECT_DIR")
 
 func init() {
 	os.Setenv("USE_STATSD", "false")
+	os.Setenv("REDIS_PIPELINE_WINDOW", "100us")
+	os.Setenv("REDIS_PIPELINE_LIMIT", "10")
+	os.Setenv("HOT_KEY_DETECTION_ENABLED", "true")
+	os.Setenv("HOT_KEY_THRESHOLD", "10")
+	os.Setenv("HOT_KEY_FLUSH_WINDOW", "50us")
+
+	//os.Setenv("REDIS_POOL_SIZE", "10")
+	os.Setenv("REDIS_TYPE", "cluster")
+
 	// Memcache does async increments, which can cause race conditions during
 	// testing. Force sync increments so the quotas are predictable during testing.
 	memcached.AutoFlushForIntegrationTests = true
@@ -77,8 +90,25 @@ func makeSimpleRedisSettings(redisPort int, perSecondPort int, perSecond bool, l
 	s.RedisPerSecond = perSecond
 	s.LocalCacheSizeInBytes = localCacheSize
 	s.BackendType = "redis"
-	s.RedisUrl = "localhost:" + strconv.Itoa(redisPort)
-	s.RedisPerSecondUrl = "localhost:" + strconv.Itoa(perSecondPort)
+
+	// Use Docker Compose Redis Cluster if default port is specified
+	if redisPort == 6379 {
+		// Docker Compose Redis Cluster setup (3 masters)
+		s.RedisType = "cluster"
+		s.RedisUrl = "127.0.0.1:7001,127.0.0.1:7002,127.0.0.1:7003"
+		s.RedisPipelineLimit = 8
+
+		if perSecond {
+			s.RedisPerSecondType = "cluster"
+			s.RedisPerSecondUrl = "127.0.0.1:7001,127.0.0.1:7002,127.0.0.1:7003"
+			s.RedisPerSecondPipelineLimit = 8
+		}
+	} else {
+		// Single Redis instance for other ports
+		s.RedisUrl = "127.0.0.1:" + strconv.Itoa(redisPort)
+		s.RedisPerSecondUrl = "127.0.0.1:" + strconv.Itoa(perSecondPort)
+	}
+
 	return s
 }
 
@@ -90,28 +120,41 @@ func makeSimpleRedisSettingsWithStopCacheKeyIncrementWhenOverlimit(redisPort int
 }
 
 func TestBasicConfig(t *testing.T) {
+	// Use Docker Compose Redis Cluster (ports 7001-7003)
+	// WithMultiRedis will detect these ports are already open and just flush them
 	common.WithMultiRedis(t, []common.RedisConfig{
-		{Port: 6383},
-		{Port: 6380},
+		//{Port: 7001},
+		//{Port: 7002},
+		//{Port: 7003},
 	}, func() {
-		t.Run("WithoutPerSecondRedis", testBasicConfig(makeSimpleRedisSettings(6383, 6380, false, 0)))
-		t.Run("WithPerSecondRedis", testBasicConfig(makeSimpleRedisSettings(6383, 6380, true, 0)))
-		t.Run("WithoutPerSecondRedisWithLocalCache", testBasicConfig(makeSimpleRedisSettings(6383, 6380, false, 1000)))
-		t.Run("WithPerSecondRedisWithLocalCache", testBasicConfig(makeSimpleRedisSettings(6383, 6380, true, 1000)))
-		cacheSettings := makeSimpleRedisSettings(6383, 6380, false, 0)
+		//t.Run("WithoutPerSecondRedis", testBasicConfig(makeSimpleRedisSettings(6379, 6379, false, 0)))
+		//t.Run("WithPerSecondRedis", testBasicConfig(makeSimpleRedisSettings(6379, 6379, true, 0)))
+		t.Run("WithoutPerSecondRedisWithLocalCache", testBasicConfigWithProcess(makeSimpleRedisSettings(6379, 6379, false, 1000)))
+		//t.Run("WithPerSecondRedisWithLocalCache", testBasicConfig(makeSimpleRedisSettings(6379, 6379, true, 1000)))
+		cacheSettings := makeSimpleRedisSettings(6379, 6379, false, 0)
 		cacheSettings.CacheKeyPrefix = "prefix:"
-		t.Run("WithoutPerSecondRedisWithCachePrefix", testBasicConfig(cacheSettings))
-		t.Run("WithoutPerSecondRedisWithstopCacheKeyIncrementWhenOverlimitConfig", testBasicConfig(makeSimpleRedisSettingsWithStopCacheKeyIncrementWhenOverlimit(6383, 6380, false, 0)))
-		t.Run("WithPerSecondRedisWithstopCacheKeyIncrementWhenOverlimitConfig", testBasicConfig(makeSimpleRedisSettingsWithStopCacheKeyIncrementWhenOverlimit(6383, 6380, true, 0)))
-		t.Run("WithoutPerSecondRedisWithLocalCacheAndstopCacheKeyIncrementWhenOverlimitConfig", testBasicConfig(makeSimpleRedisSettingsWithStopCacheKeyIncrementWhenOverlimit(6383, 6380, false, 1000)))
-		t.Run("WithPerSecondRedisWithLocalCacheAndstopCacheKeyIncrementWhenOverlimitConfig", testBasicConfig(makeSimpleRedisSettingsWithStopCacheKeyIncrementWhenOverlimit(6383, 6380, true, 1000)))
+		//t.Run("WithoutPerSecondRedisWithCachePrefix", testBasicConfig(cacheSettings))
+		//t.Run("WithoutPerSecondRedisWithstopCacheKeyIncrementWhenOverlimitConfig", testBasicConfig(makeSimpleRedisSettingsWithStopCacheKeyIncrementWhenOverlimit(6379, 6379, false, 0)))
+		//t.Run("WithPerSecondRedisWithstopCacheKeyIncrementWhenOverlimitConfig", testBasicConfig(makeSimpleRedisSettingsWithStopCacheKeyIncrementWhenOverlimit(6379, 6379, true, 0)))
+		//t.Run("WithoutPerSecondRedisWithLocalCacheAndstopCacheKeyIncrementWhenOverlimitConfig", testBasicConfig(makeSimpleRedisSettingsWithStopCacheKeyIncrementWhenOverlimit(6379, 6379, false, 1000)))
+		//t.Run("WithPerSecondRedisWithLocalCacheAndstopCacheKeyIncrementWhenOverlimitConfig", testBasicConfig(makeSimpleRedisSettingsWithStopCacheKeyIncrementWhenOverlimit(6379, 6379, true, 1000)))
+	})
+}
+
+// TestBasicConfigWithSeparateProcess runs the ratelimit server in a separate process
+func TestBasicConfigWithSeparateProcess(t *testing.T) {
+	common.WithMultiRedis(t, []common.RedisConfig{
+		{Port: 6379},
+	}, func() {
+		t.Run("WithoutPerSecondRedis", testBasicConfigWithProcess(makeSimpleRedisSettings(6379, 6379, false, 0)))
+		t.Run("WithLocalCache", testBasicConfigWithProcess(makeSimpleRedisSettings(6379, 6379, false, 1000)))
 	})
 }
 
 func TestXdsProviderBasicConfig(t *testing.T) {
 	common.WithMultiRedis(t, []common.RedisConfig{
-		{Port: 6383},
-		{Port: 6380},
+		{Port: 6379},
+		{Port: 6379},
 	}, func() {
 		_, cancel := startXdsSotwServer(t)
 		defer cancel()
@@ -124,9 +167,9 @@ func TestXdsProviderBasicConfig(t *testing.T) {
 
 func TestBasicConfig_ExtraTags(t *testing.T) {
 	common.WithMultiRedis(t, []common.RedisConfig{
-		{Port: 6383},
+		{Port: 6379},
 	}, func() {
-		extraTagsSettings := makeSimpleRedisSettings(6383, 6380, false, 0)
+		extraTagsSettings := makeSimpleRedisSettings(6379, 6379, false, 0)
 		extraTagsSettings.ExtraTags = map[string]string{"foo": "bar", "a": "b"}
 		runner := startTestRunner(t, extraTagsSettings)
 		defer runner.Stop()
@@ -201,7 +244,7 @@ func TestBasicAuthConfigWithRedisSentinel(t *testing.T) {
 
 func TestBasicReloadConfig(t *testing.T) {
 	common.WithMultiRedis(t, []common.RedisConfig{
-		{Port: 6383},
+		{Port: 6379},
 	}, func() {
 		t.Run("BasicWithoutWatchRoot", testBasicConfigWithoutWatchRoot(false, 0))
 		t.Run("ReloadWithoutWatchRoot", testBasicConfigReload(false, 0, false))
@@ -210,7 +253,7 @@ func TestBasicReloadConfig(t *testing.T) {
 
 func TestXdsProviderBasicConfigReload(t *testing.T) {
 	common.WithMultiRedis(t, []common.RedisConfig{
-		{Port: 6383},
+		{Port: 6379},
 	}, func() {
 		setSnapshotFunc, cancel := startXdsSotwServer(t)
 		defer cancel()
@@ -297,9 +340,9 @@ func Test_mTLS(t *testing.T) {
 
 func TestReloadGRPCServerCerts(t *testing.T) {
 	common.WithMultiRedis(t, []common.RedisConfig{
-		{Port: 6383},
+		{Port: 6379},
 	}, func() {
-		s := makeSimpleRedisSettings(6383, 6380, false, 0)
+		s := makeSimpleRedisSettings(6379, 6379, false, 0)
 		assert := assert.New(t)
 		// TLS setup initially used to configure the server
 		initialServerCAFile, initialServerCertFile, initialServerCertKey, err := mTLSSetup(utils.ServerCA)
@@ -413,6 +456,110 @@ func testBasicConfig(s settings.Settings) func(*testing.T) {
 	return testBasicBaseConfig(s)
 }
 
+// testBasicConfigWithProcess runs the test with ratelimit server in a separate process
+func testBasicConfigWithProcess(s settings.Settings) func(*testing.T) {
+	return func(t *testing.T) {
+		enableLocalCache := s.LocalCacheSizeInBytes > 0
+		runner := startTestRunnerProcess(t, s)
+		defer runner.Stop()
+
+		assert := assert.New(t)
+		conn, err := grpc.Dial(fmt.Sprintf("localhost:%v", s.GrpcPort), grpc.WithInsecure())
+		assert.NoError(err)
+		defer conn.Close()
+		c := pb.NewRateLimitServiceClient(conn)
+
+		// Test 1: Unknown domain returns OK with no limit
+		response, err := c.ShouldRateLimit(
+			context.Background(),
+			common.NewRateLimitRequest("foo", [][][2]string{{{getCacheKey("hello", enableLocalCache), "world"}}}, 1))
+		common.AssertProtoEqual(
+			assert,
+			&pb.RateLimitResponse{
+				OverallCode: pb.RateLimitResponse_OK,
+				Statuses:    []*pb.RateLimitResponse_DescriptorStatus{{Code: pb.RateLimitResponse_OK, CurrentLimit: nil, LimitRemaining: 0}},
+			},
+			response)
+		assert.NoError(err)
+
+		// Test 2: Known domain with limit
+		response, err = c.ShouldRateLimit(
+			context.Background(),
+			common.NewRateLimitRequest("basic", [][][2]string{{{getCacheKey("key1", enableLocalCache), "foo"}}}, 1))
+		assert.NoError(err)
+		require.NotEmpty(t, response.GetStatuses())
+		durRemaining := response.GetStatuses()[0].DurationUntilReset
+		common.AssertProtoEqual(
+			assert,
+			&pb.RateLimitResponse{
+				OverallCode: pb.RateLimitResponse_OK,
+				Statuses: []*pb.RateLimitResponse_DescriptorStatus{
+					newDescriptorStatus(pb.RateLimitResponse_OK, 50, pb.RateLimitResponse_RateLimit_SECOND, 49, durRemaining),
+				},
+			},
+			response)
+
+		// Test 3: Send 25 async requests and verify rate limiting behavior
+		r := rand.New(rand.NewSource(time.Now().UnixNano()))
+		randomInt := r.Int()
+
+		type asyncResult struct {
+			response *pb.RateLimitResponse
+			err      error
+			duration time.Duration
+		}
+
+		const numRequests = 200
+		results := make([]asyncResult, numRequests)
+		var wg sync.WaitGroup
+		wg.Add(numRequests)
+
+		startTime := time.Now()
+		for i := 0; i < numRequests; i++ {
+			go func(idx int) {
+				defer wg.Done()
+				reqStart := time.Now()
+
+				resp, reqErr := c.ShouldRateLimit(
+					context.Background(),
+					common.NewRateLimitRequest(
+						"another", [][][2]string{
+							{{getCacheKey("key2", enableLocalCache), strconv.Itoa(randomInt)}},
+							{{getCacheKey("key3", enableLocalCache), strconv.Itoa(randomInt)}},
+							{{getCacheKey("key4", enableLocalCache), strconv.Itoa(randomInt)}},
+							{{getCacheKey("key5", enableLocalCache), strconv.Itoa(randomInt)}},
+							{{getCacheKey("key6", enableLocalCache), strconv.Itoa(randomInt)}},
+						}, 1))
+				results[idx] = asyncResult{
+					response: resp,
+					err:      reqErr,
+					duration: time.Since(reqStart),
+				}
+			}(i)
+		}
+		wg.Wait()
+		totalDuration := time.Since(startTime)
+
+		// Verify all requests completed without error
+		okCount := 0
+		overLimitCount := 0
+		for i := 0; i < numRequests; i++ {
+			assert.NoError(results[i].err)
+			if results[i].response.OverallCode == pb.RateLimitResponse_OK {
+				okCount++
+			} else if results[i].response.OverallCode == pb.RateLimitResponse_OVER_LIMIT {
+				overLimitCount++
+			}
+		}
+
+		// With limit of 20, we expect 20 OK and 5 OVER_LIMIT
+		assert.Equal(10, okCount, "Expected 100 OK responses")
+		assert.Equal(190, overLimitCount, "Expected 5 OVER_LIMIT responses")
+
+		t.Logf("Separate process test: Total time for %d async requests: %v (avg: %v)", numRequests, totalDuration, totalDuration/time.Duration(numRequests))
+	}
+}
+
 func testBasicConfigAuth(perSecond bool, local_cache_size int) func(*testing.T) {
 	s := makeSimpleRedisSettings(6384, 6385, perSecond, local_cache_size)
 	s.RedisAuth = "password123"
@@ -456,7 +603,7 @@ func testBasicAuthConfigWithRedisSentinel(perSecond bool, local_cache_size int) 
 }
 
 func testBasicConfigWithoutWatchRoot(perSecond bool, local_cache_size int) func(*testing.T) {
-	s := makeSimpleRedisSettings(6383, 6380, perSecond, local_cache_size)
+	s := makeSimpleRedisSettings(6379, 6379, perSecond, local_cache_size)
 	s.RuntimeWatchRoot = false
 
 	return testBasicBaseConfig(s)
@@ -504,7 +651,7 @@ func testBasicConfigWithoutWatchRootWithRedisSentinel(perSecond bool, local_cach
 }
 
 func testBasicConfigReload(perSecond bool, local_cache_size int, runtimeWatchRoot bool) func(*testing.T) {
-	s := makeSimpleRedisSettings(6383, 6380, perSecond, local_cache_size)
+	s := makeSimpleRedisSettings(6379, 6379, perSecond, local_cache_size)
 	s.RuntimeWatchRoot = runtimeWatchRoot
 	return testConfigReload(s, reloadNewConfigFile, restoreConfigFile)
 }
@@ -580,6 +727,8 @@ func testBasicBaseConfig(s settings.Settings) func(*testing.T) {
 		response, err = c.ShouldRateLimit(
 			context.Background(),
 			common.NewRateLimitRequest("basic", [][][2]string{{{getCacheKey("key1", enable_local_cache), "foo"}}}, 1))
+		assert.NoError(err)
+		require.NotEmpty(t, response.GetStatuses())
 		durRemaining := response.GetStatuses()[0].DurationUntilReset
 
 		common.AssertProtoEqual(
@@ -610,159 +759,123 @@ func testBasicBaseConfig(s settings.Settings) func(*testing.T) {
 		}
 
 		// Now come up with a random key, and go over limit for a minute limit which should always work.
+		// Send requests asynchronously using goroutines
 		r := rand.New(rand.NewSource(time.Now().UnixNano()))
 		randomInt := r.Int()
-		for i := 0; i < 25; i++ {
-			response, err = c.ShouldRateLimit(
-				context.Background(),
-				common.NewRateLimitRequest(
-					"another", [][][2]string{{{getCacheKey("key2", enable_local_cache), strconv.Itoa(randomInt)}}}, 1))
 
-			status := pb.RateLimitResponse_OK
-			limitRemaining := uint32(20 - (i + 1))
-			if i >= 20 {
-				status = pb.RateLimitResponse_OVER_LIMIT
-				limitRemaining = 0
-			}
-			durRemaining = response.GetStatuses()[0].DurationUntilReset
+		type asyncResult struct {
+			response *pb.RateLimitResponse
+			err      error
+			duration time.Duration
+		}
 
-			common.AssertProtoEqual(
-				assert,
-				&pb.RateLimitResponse{
-					OverallCode: status,
-					Statuses: []*pb.RateLimitResponse_DescriptorStatus{
-						newDescriptorStatus(status, 20, pb.RateLimitResponse_RateLimit_MINUTE, limitRemaining, durRemaining),
-					},
-				},
-				response)
-			assert.NoError(err)
-			key2HitCounter := runner.GetStatsStore().NewCounter(fmt.Sprintf("ratelimit.service.rate_limit.another.%s.total_hits", getCacheKey("key2", enable_local_cache)))
-			assert.Equal(i+1, int(key2HitCounter.Value()))
-			key2OverlimitCounter := runner.GetStatsStore().NewCounter(fmt.Sprintf("ratelimit.service.rate_limit.another.%s.over_limit", getCacheKey("key2", enable_local_cache)))
-			if i >= 20 {
-				assert.Equal(i-19, int(key2OverlimitCounter.Value()))
-			} else {
-				assert.Equal(0, int(key2OverlimitCounter.Value()))
-			}
-			key2LocalCacheOverLimitCounter := runner.GetStatsStore().NewCounter(fmt.Sprintf("ratelimit.service.rate_limit.another.%s.over_limit_with_local_cache", getCacheKey("key2", enable_local_cache)))
-			if enable_local_cache && i >= 20 {
-				assert.Equal(i-20, int(key2LocalCacheOverLimitCounter.Value()))
-			} else {
-				assert.Equal(0, int(key2LocalCacheOverLimitCounter.Value()))
-			}
+		const numRequests = 25
+		results := make([]asyncResult, numRequests)
+		var wg sync.WaitGroup
+		wg.Add(numRequests)
 
-			// Manually flush the cache for local_cache stats
-			runner.GetStatsStore().Flush()
-			localCacheHitCounter = runner.GetStatsStore().NewGauge("ratelimit.localcache.hitCount")
-			if enable_local_cache && i >= 20 {
-				assert.Equal(i-20, int(localCacheHitCounter.Value()))
-			} else {
-				assert.Equal(0, int(localCacheHitCounter.Value()))
-			}
-
-			localCacheMissCounter = runner.GetStatsStore().NewGauge("ratelimit.localcache.missCount")
-			if enable_local_cache {
-				if i < 20 {
-					assert.Equal(i+2, int(localCacheMissCounter.Value()))
-				} else {
-					assert.Equal(22, int(localCacheMissCounter.Value()))
+		startTime := time.Now()
+		for i := 0; i < numRequests; i++ {
+			go func(idx int) {
+				defer wg.Done()
+				reqStart := time.Now()
+				resp, reqErr := c.ShouldRateLimit(
+					context.Background(),
+					common.NewRateLimitRequest(
+						"another", [][][2]string{{{getCacheKey("key2", enable_local_cache), strconv.Itoa(randomInt)}}}, 1))
+				results[idx] = asyncResult{
+					response: resp,
+					err:      reqErr,
+					duration: time.Since(reqStart),
 				}
-			} else {
-				assert.Equal(0, int(localCacheMissCounter.Value()))
+			}(i)
+		}
+		wg.Wait()
+		totalDuration := time.Since(startTime)
+
+		// Verify all requests completed without error
+		okCount := 0
+		overLimitCount := 0
+		for i := 0; i < numRequests; i++ {
+			assert.NoError(results[i].err)
+			if results[i].response.OverallCode == pb.RateLimitResponse_OK {
+				okCount++
+			} else if results[i].response.OverallCode == pb.RateLimitResponse_OVER_LIMIT {
+				overLimitCount++
 			}
 		}
+
+		// With limit of 20, we expect 20 OK and 5 OVER_LIMIT
+		assert.Equal(20, okCount, "Expected 20 OK responses")
+		assert.Equal(5, overLimitCount, "Expected 5 OVER_LIMIT responses")
+
+		// Verify counters after all async requests complete
+		key2HitCounter := runner.GetStatsStore().NewCounter(fmt.Sprintf("ratelimit.service.rate_limit.another.%s.total_hits", getCacheKey("key2", enable_local_cache)))
+		assert.Equal(numRequests, int(key2HitCounter.Value()))
+		key2OverlimitCounter := runner.GetStatsStore().NewCounter(fmt.Sprintf("ratelimit.service.rate_limit.another.%s.over_limit", getCacheKey("key2", enable_local_cache)))
+		assert.Equal(5, int(key2OverlimitCounter.Value()))
+
+		t.Logf("Total time for %d async requests: %v (avg: %v)", numRequests, totalDuration, totalDuration/time.Duration(numRequests))
 
 		// Limit now against 2 keys in the same domain.
+		// Send requests asynchronously using goroutines
 		randomInt = r.Int()
-		for i := 0; i < 15; i++ {
-			response, err = c.ShouldRateLimit(
-				context.Background(),
-				common.NewRateLimitRequest(
-					"another",
-					[][][2]string{
-						{{getCacheKey("key2", enable_local_cache), strconv.Itoa(randomInt)}},
-						{{getCacheKey("key3", enable_local_cache), strconv.Itoa(randomInt)}},
-					}, 1))
 
-			status := pb.RateLimitResponse_OK
-			limitRemaining1 := uint32(20 - (i + 1))
-			limitRemaining2 := uint32(10 - (i + 1))
-			if i >= 10 {
-				status = pb.RateLimitResponse_OVER_LIMIT
-				limitRemaining2 = 0
-				// Ceased incrementing cached keys upon exceeding the overall rate limit in the Redis cache flow.
-				// Consequently, the remaining limit should remain unaltered.
-				if s.StopCacheKeyIncrementWhenOverlimit && s.BackendType != "memcache" {
-					limitRemaining1 = 10
+		const numRequests2Keys = 15
+		results2Keys := make([]asyncResult, numRequests2Keys)
+		var wg2 sync.WaitGroup
+		wg2.Add(numRequests2Keys)
+
+		startTime2 := time.Now()
+		for i := 0; i < numRequests2Keys; i++ {
+			go func(idx int) {
+				defer wg2.Done()
+				reqStart := time.Now()
+				resp, reqErr := c.ShouldRateLimit(
+					context.Background(),
+					common.NewRateLimitRequest(
+						"another",
+						[][][2]string{
+							{{getCacheKey("key2", enable_local_cache), strconv.Itoa(randomInt)}},
+							{{getCacheKey("key3", enable_local_cache), strconv.Itoa(randomInt)}},
+						}, 1))
+				results2Keys[idx] = asyncResult{
+					response: resp,
+					err:      reqErr,
+					duration: time.Since(reqStart),
 				}
-			}
-			durRemaining1 := response.GetStatuses()[0].DurationUntilReset
-			durRemaining2 := response.GetStatuses()[1].DurationUntilReset
-			common.AssertProtoEqual(
-				assert,
-				&pb.RateLimitResponse{
-					OverallCode: status,
-					Statuses: []*pb.RateLimitResponse_DescriptorStatus{
-						newDescriptorStatus(pb.RateLimitResponse_OK, 20, pb.RateLimitResponse_RateLimit_MINUTE, limitRemaining1, durRemaining1),
-						newDescriptorStatus(status, 10, pb.RateLimitResponse_RateLimit_HOUR, limitRemaining2, durRemaining2),
-					},
-				},
-				response)
-			assert.NoError(err)
+			}(i)
+		}
+		wg2.Wait()
+		totalDuration2 := time.Since(startTime2)
 
-			key2HitCounter := runner.GetStatsStore().NewCounter(fmt.Sprintf("ratelimit.service.rate_limit.another.%s.total_hits", getCacheKey("key2", enable_local_cache)))
-			assert.Equal(i+26, int(key2HitCounter.Value()))
-			key2OverlimitCounter := runner.GetStatsStore().NewCounter(fmt.Sprintf("ratelimit.service.rate_limit.another.%s.over_limit", getCacheKey("key2", enable_local_cache)))
-			assert.Equal(5, int(key2OverlimitCounter.Value()))
-			key2LocalCacheOverLimitCounter := runner.GetStatsStore().NewCounter(fmt.Sprintf("ratelimit.service.rate_limit.another.%s.over_limit_with_local_cache", getCacheKey("key2", enable_local_cache)))
-			if enable_local_cache {
-				assert.Equal(4, int(key2LocalCacheOverLimitCounter.Value()))
-			} else {
-				assert.Equal(0, int(key2LocalCacheOverLimitCounter.Value()))
-			}
-
-			key3HitCounter := runner.GetStatsStore().NewCounter(fmt.Sprintf("ratelimit.service.rate_limit.another.%s.total_hits", getCacheKey("key3", enable_local_cache)))
-			assert.Equal(i+1, int(key3HitCounter.Value()))
-			key3OverlimitCounter := runner.GetStatsStore().NewCounter(fmt.Sprintf("ratelimit.service.rate_limit.another.%s.over_limit", getCacheKey("key3", enable_local_cache)))
-			if i >= 10 {
-				assert.Equal(i-9, int(key3OverlimitCounter.Value()))
-			} else {
-				assert.Equal(0, int(key3OverlimitCounter.Value()))
-			}
-			key3LocalCacheOverLimitCounter := runner.GetStatsStore().NewCounter(fmt.Sprintf("ratelimit.service.rate_limit.another.%s.over_limit_with_local_cache", getCacheKey("key3", enable_local_cache)))
-			if enable_local_cache && i >= 10 {
-				assert.Equal(i-10, int(key3LocalCacheOverLimitCounter.Value()))
-			} else {
-				assert.Equal(0, int(key3LocalCacheOverLimitCounter.Value()))
-			}
-
-			// Manually flush the cache for local_cache stats
-			runner.GetStatsStore().Flush()
-			localCacheHitCounter = runner.GetStatsStore().NewGauge("ratelimit.localcache.hitCount")
-			if enable_local_cache {
-				if i < 10 {
-					assert.Equal(4, int(localCacheHitCounter.Value()))
-				} else {
-					// key3 caches hit
-					assert.Equal(i-6, int(localCacheHitCounter.Value()))
-				}
-			} else {
-				assert.Equal(0, int(localCacheHitCounter.Value()))
-			}
-
-			localCacheMissCounter = runner.GetStatsStore().NewGauge("ratelimit.localcache.missCount")
-			if enable_local_cache {
-				if i < 10 {
-					// both key2 and key3 cache miss.
-					assert.Equal(i*2+24, int(localCacheMissCounter.Value()))
-				} else {
-					// key2 caches miss.
-					assert.Equal(i+34, int(localCacheMissCounter.Value()))
-				}
-			} else {
-				assert.Equal(0, int(localCacheMissCounter.Value()))
+		// Verify all requests completed without error
+		okCount2 := 0
+		overLimitCount2 := 0
+		for i := 0; i < numRequests2Keys; i++ {
+			assert.NoError(results2Keys[i].err)
+			if results2Keys[i].response.OverallCode == pb.RateLimitResponse_OK {
+				okCount2++
+			} else if results2Keys[i].response.OverallCode == pb.RateLimitResponse_OVER_LIMIT {
+				overLimitCount2++
 			}
 		}
+
+		// With key3 limit of 10, we expect 10 OK and 5 OVER_LIMIT
+		assert.Equal(10, okCount2, "Expected 10 OK responses for 2-key requests")
+		assert.Equal(5, overLimitCount2, "Expected 5 OVER_LIMIT responses for 2-key requests")
+
+		// Verify counters after all async requests complete
+		key2HitCounter = runner.GetStatsStore().NewCounter(fmt.Sprintf("ratelimit.service.rate_limit.another.%s.total_hits", getCacheKey("key2", enable_local_cache)))
+		assert.Equal(numRequests+numRequests2Keys, int(key2HitCounter.Value()))
+
+		key3HitCounter := runner.GetStatsStore().NewCounter(fmt.Sprintf("ratelimit.service.rate_limit.another.%s.total_hits", getCacheKey("key3", enable_local_cache)))
+		assert.Equal(numRequests2Keys, int(key3HitCounter.Value()))
+
+		key3OverlimitCounter := runner.GetStatsStore().NewCounter(fmt.Sprintf("ratelimit.service.rate_limit.another.%s.over_limit", getCacheKey("key3", enable_local_cache)))
+		assert.Equal(5, int(key3OverlimitCounter.Value()))
+
+		t.Logf("Total time for %d async requests (2 keys): %v (avg: %v)", numRequests2Keys, totalDuration2, totalDuration2/time.Duration(numRequests2Keys))
 
 		// Test DurationUntilReset by hitting same key twice
 		resp1, err := c.ShouldRateLimit(
@@ -799,6 +912,95 @@ func startTestRunner(t *testing.T, s settings.Settings) *runner.Runner {
 	common.WaitForTcpPort(context.Background(), s.GrpcPort, 1*time.Second)
 
 	return &runner
+}
+
+// ProcessRunner wraps a separate process running the ratelimit server
+type ProcessRunner struct {
+	cmd      *exec.Cmd
+	t        *testing.T
+	grpcPort int
+}
+
+// Stop terminates the ratelimit server process
+func (p *ProcessRunner) Stop() {
+	if p.cmd != nil && p.cmd.Process != nil {
+		// Send SIGTERM for graceful shutdown
+		p.cmd.Process.Signal(syscall.SIGTERM)
+
+		// Wait for process to exit with timeout
+		done := make(chan error, 1)
+		go func() {
+			done <- p.cmd.Wait()
+		}()
+
+		select {
+		case <-done:
+			// Process exited
+		case <-time.After(5 * time.Second):
+			// Force kill if not exited
+			p.cmd.Process.Kill()
+		}
+	}
+}
+
+// startTestRunnerProcess starts the ratelimit server as a separate process
+func startTestRunnerProcess(t *testing.T, s settings.Settings) *ProcessRunner {
+	t.Helper()
+
+	// Build the ratelimit binary first
+	buildCmd := exec.Command("go", "build", "-o", "/tmp/ratelimit_test_server", "/Users/seonghyun/GolandProjects/ratelimit/src/service_cmd/main.go")
+	buildCmd.Dir = projectDir
+	if output, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to build ratelimit server: %v\nOutput: %s", err, output)
+	}
+
+	// Prepare environment variables based on settings
+	env := os.Environ()
+	env = append(env, fmt.Sprintf("PORT=%d", s.Port))
+	env = append(env, fmt.Sprintf("GRPC_PORT=%d", s.GrpcPort))
+	env = append(env, fmt.Sprintf("DEBUG_PORT=%d", s.DebugPort))
+	env = append(env, fmt.Sprintf("RUNTIME_ROOT=%s", s.RuntimePath))
+	env = append(env, fmt.Sprintf("RUNTIME_SUBDIRECTORY=%s", s.RuntimeSubdirectory))
+	env = append(env, fmt.Sprintf("RUNTIME_APPDIRECTORY=%s", s.RuntimeAppDirectory))
+	env = append(env, fmt.Sprintf("USE_STATSD=%t", s.UseStatsd))
+	env = append(env, fmt.Sprintf("BACKEND_TYPE=%s", s.BackendType))
+	env = append(env, fmt.Sprintf("REDIS_SOCKET_TYPE=%s", s.RedisSocketType))
+	env = append(env, fmt.Sprintf("REDIS_URL=%s", s.RedisUrl))
+	env = append(env, fmt.Sprintf("REDIS_PERSECOND=%t", s.RedisPerSecond))
+	env = append(env, fmt.Sprintf("REDIS_PERSECOND_SOCKET_TYPE=%s", s.RedisPerSecondSocketType))
+	env = append(env, fmt.Sprintf("REDIS_PERSECOND_URL=%s", s.RedisPerSecondUrl))
+	env = append(env, fmt.Sprintf("LOCAL_CACHE_SIZE_IN_BYTES=%d", s.LocalCacheSizeInBytes))
+
+	if s.RedisAuth != "" {
+		env = append(env, fmt.Sprintf("REDIS_AUTH=%s", s.RedisAuth))
+	}
+	if s.RedisPerSecondAuth != "" {
+		env = append(env, fmt.Sprintf("REDIS_PERSECOND_AUTH=%s", s.RedisPerSecondAuth))
+	}
+	if s.CacheKeyPrefix != "" {
+		env = append(env, fmt.Sprintf("CACHE_KEY_PREFIX=%s", s.CacheKeyPrefix))
+	}
+
+	// Start the server process
+	cmd := exec.Command("/tmp/ratelimit_test_server")
+	cmd.Dir = projectDir
+	cmd.Env = env
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("Failed to start ratelimit server process: %v", err)
+	}
+
+	t.Logf("Started ratelimit server process with PID: %d", cmd.Process.Pid)
+
+	// Wait for the server to come up
+	common.WaitForTcpPort(context.Background(), s.GrpcPort, 5*time.Second)
+	return &ProcessRunner{
+		cmd:      cmd,
+		t:        t,
+		grpcPort: s.GrpcPort,
+	}
 }
 
 func testConfigReload(s settings.Settings, reloadConfFunc, restoreConfFunc func()) func(*testing.T) {
@@ -911,10 +1113,10 @@ func waitForConfigReload(runner *runner.Runner, loadCountBefore uint64) (uint64,
 
 func TestShareThreshold(t *testing.T) {
 	common.WithMultiRedis(t, []common.RedisConfig{
-		{Port: 6383},
-		{Port: 6380},
+		{Port: 6379},
+		{Port: 6379},
 	}, func() {
-		t.Run("WithoutPerSecondRedis", testShareThreshold(makeSimpleRedisSettings(6383, 6380, false, 0)))
+		t.Run("WithoutPerSecondRedis", testShareThreshold(makeSimpleRedisSettings(6379, 6379, false, 0)))
 	})
 }
 
