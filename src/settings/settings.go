@@ -84,7 +84,7 @@ type Settings struct {
 	// Stats-related settings
 	UseDogStatsd           bool              `envconfig:"USE_DOG_STATSD" default:"false"`
 	UseDogStatsdMogrifiers []string          `envconfig:"USE_DOG_STATSD_MOGRIFIERS" default:""`
-	UseStatsd              bool              `envconfig:"USE_STATSD" default:"true"`
+	UseStatsd              bool              `envconfig:"USE_STATSD" default:"false"`
 	StatsdHost             string            `envconfig:"STATSD_HOST" default:"localhost"`
 	StatsdPort             int               `envconfig:"STATSD_PORT" default:"8125"`
 	ExtraTags              map[string]string `envconfig:"EXTRA_TAGS" default:""`
@@ -123,9 +123,9 @@ type Settings struct {
 	HealthyWithAtLeastOneConfigLoaded bool `envconfig:"HEALTHY_WITH_AT_LEAST_ONE_CONFIG_LOADED" default:"false"`
 
 	// Redis settings
-	RedisSocketType string `envconfig:"REDIS_SOCKET_TYPE" default:"unix"`
+	RedisSocketType string `envconfig:"REDIS_SOCKET_TYPE" default:"tcp"`
 	RedisType       string `envconfig:"REDIS_TYPE" default:"SINGLE"`
-	RedisUrl        string `envconfig:"REDIS_URL" default:"/var/run/nutcracker/ratelimit.sock"`
+	RedisUrl        string `envconfig:"REDIS_URL" default:"localhost:6379"`
 	RedisPoolSize   int    `envconfig:"REDIS_POOL_SIZE" default:"10"`
 	RedisAuth       string `envconfig:"REDIS_AUTH" default:""`
 	RedisTls        bool   `envconfig:"REDIS_TLS" default:"false"`
@@ -145,9 +145,9 @@ type Settings struct {
 	// If limit is zero then no limit will be used and pipelines will only be limited by the specified time window.
 	RedisPipelineLimit       int    `envconfig:"REDIS_PIPELINE_LIMIT" default:"0"`
 	RedisPerSecond           bool   `envconfig:"REDIS_PERSECOND" default:"false"`
-	RedisPerSecondSocketType string `envconfig:"REDIS_PERSECOND_SOCKET_TYPE" default:"unix"`
+	RedisPerSecondSocketType string `envconfig:"REDIS_PERSECOND_SOCKET_TYPE" default:"tcp"`
 	RedisPerSecondType       string `envconfig:"REDIS_PERSECOND_TYPE" default:"SINGLE"`
-	RedisPerSecondUrl        string `envconfig:"REDIS_PERSECOND_URL" default:"/var/run/nutcracker/ratelimitpersecond.sock"`
+	RedisPerSecondUrl        string `envconfig:"REDIS_PERSECOND_URL" default:"localhost:6379"`
 	RedisPerSecondPoolSize   int    `envconfig:"REDIS_PERSECOND_POOL_SIZE" default:"10"`
 	RedisPerSecondAuth       string `envconfig:"REDIS_PERSECOND_AUTH" default:""`
 	RedisPerSecondTls        bool   `envconfig:"REDIS_PERSECOND_TLS" default:"false"`
