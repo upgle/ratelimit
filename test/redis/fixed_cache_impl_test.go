@@ -35,7 +35,11 @@ func TestRedis(t *testing.T) {
 }
 
 func pipeAppend(pipeline redis.Pipeline, rcv interface{}, cmd, key string, args ...interface{}) redis.Pipeline {
-	return append(pipeline, radix.FlatCmd(rcv, cmd, key, args...))
+	// Combine key and args into a single slice for v4
+	allArgs := make([]interface{}, 0, 1+len(args))
+	allArgs = append(allArgs, key)
+	allArgs = append(allArgs, args...)
+	return append(pipeline, radix.FlatCmd(rcv, cmd, allArgs...))
 }
 
 func testRedis(usePerSecondRedis bool) func(*testing.T) {
