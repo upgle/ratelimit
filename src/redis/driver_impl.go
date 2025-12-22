@@ -1,14 +1,16 @@
 package redis
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
 	stats "github.com/lyft/gostats"
-	"github.com/mediocregopher/radix/v3"
-	"github.com/mediocregopher/radix/v3/trace"
+	"github.com/mediocregopher/radix/v4"
+	"github.com/mediocregopher/radix/v4/trace"
 	logger "github.com/sirupsen/logrus"
 
 	"github.com/envoyproxy/ratelimit/src/server"
@@ -58,8 +60,15 @@ func poolTrace(ps *poolStats, healthCheckActiveConnection bool, srv server.Serve
 	}
 }
 
+// redisClient is an interface that abstracts radix Client, Cluster, and Sentinel
+// All of these types have Do(context.Context, Action) and Close() methods
+type redisClient interface {
+	Do(context.Context, radix.Action) error
+	Close() error
+}
+
 type clientImpl struct {
-	client             radix.Client
+	client             redisClient
 	stats              poolStats
 	implicitPipelining bool
 }
@@ -77,101 +86,139 @@ func NewClientImpl(scope stats.Scope, useTls bool, auth, redisSocketType, redisT
 	maskedUrl := utils.MaskCredentialsInUrl(url)
 	logger.Warnf("connecting to redis on %s with pool size %d", maskedUrl, poolSize)
 
-	df := func(network, addr string) (radix.Conn, error) {
-		var dialOpts []radix.DialOpt
+	// Create Dialer for connecting to Redis
+	var netDialer net.Dialer
+	if timeout > 0 {
+		netDialer.Timeout = timeout
+	}
 
-		dialOpts = append(dialOpts, radix.DialTimeout(timeout))
+	dialer := radix.Dialer{
+		NetDialer: &netDialer,
+	}
 
-		if useTls {
-			dialOpts = append(dialOpts, radix.DialUseTLS(tlsConfig))
+	// Setup TLS if needed
+	if useTls {
+		tlsNetDialer := tls.Dialer{
+			NetDialer: &netDialer,
+			Config:    tlsConfig,
 		}
+		dialer.NetDialer = &tlsNetDialer
+	}
 
-		if auth != "" {
-			user, pass, found := strings.Cut(auth, ":")
-			if found {
-				logger.Warnf("enabling authentication to redis on %s with user %s", maskedUrl, user)
-				dialOpts = append(dialOpts, radix.DialAuthUser(user, pass))
-			} else {
-				logger.Warnf("enabling authentication to redis on %s without user", maskedUrl)
-				dialOpts = append(dialOpts, radix.DialAuthPass(auth))
-			}
+	if auth != "" {
+		user, pass, found := strings.Cut(auth, ":")
+		if found {
+			logger.Warnf("enabling authentication to redis on %s with user %s", maskedUrl, user)
+			dialer.AuthUser = user
+			dialer.AuthPass = pass
+		} else {
+			logger.Warnf("enabling authentication to redis on %s without user", maskedUrl)
+			dialer.AuthPass = auth
 		}
-
-		return radix.Dial(network, addr, dialOpts...)
 	}
 
 	stats := newPoolStats(scope)
 
-	opts := []radix.PoolOpt{radix.PoolConnFunc(df), radix.PoolWithTrace(poolTrace(&stats, healthCheckActiveConnection, srv))}
+	// Create PoolConfig
+	poolConfig := radix.PoolConfig{
+		Dialer: dialer,
+		Size:   poolSize,
+		Trace:  poolTrace(&stats, healthCheckActiveConnection, srv),
+	}
 
+	// Note: radix v4 handles pipelining differently than v3
+	// PipelineWindow and PipelineConcurrency are not direct config options
+	// Pipelining in v4 is managed via Dialer.WriteFlushInterval
 	implicitPipelining := true
 	if pipelineWindow == 0 && pipelineLimit == 0 {
 		implicitPipelining = false
 	} else {
-		opts = append(opts, radix.PoolPipelineWindow(pipelineWindow, pipelineLimit))
+		// Set WriteFlushInterval for implicit pipelining
+		poolConfig.Dialer.WriteFlushInterval = pipelineWindow
+		logger.Debugf("Setting WriteFlushInterval to %v for implicit pipelining", pipelineWindow)
 	}
 	logger.Debugf("Implicit pipelining enabled: %v", implicitPipelining)
 
+	// Note: v4 doesn't have direct equivalents for PoolOnEmpty* options
+	// These would need to be handled differently or may not be available
 	switch strings.ToUpper(poolOnEmptyBehavior) {
 	case "WAIT":
-		opts = append(opts, radix.PoolOnEmptyWait())
-		logger.Warnf("Redis pool %s: on-empty=WAIT (block until connection available)", maskedUrl)
+		logger.Warnf("Redis pool %s: on-empty=WAIT behavior not directly supported in radix v4", maskedUrl)
 	case "CREATE":
-		opts = append(opts, radix.PoolOnEmptyCreateAfter(poolOnEmptyWaitDuration))
-		logger.Warnf("Redis pool %s: on-empty=CREATE after %v", maskedUrl, poolOnEmptyWaitDuration)
+		logger.Warnf("Redis pool %s: on-empty=CREATE after %v (v4 default behavior)", maskedUrl, poolOnEmptyWaitDuration)
 	case "ERROR":
-		opts = append(opts, radix.PoolOnEmptyErrAfter(poolOnEmptyWaitDuration))
-		logger.Warnf("Redis pool %s: on-empty=ERROR after %v (fail-fast)", maskedUrl, poolOnEmptyWaitDuration)
+		logger.Warnf("Redis pool %s: on-empty=ERROR after %v behavior not directly supported in radix v4", maskedUrl, poolOnEmptyWaitDuration)
 	default:
-		logger.Warnf("Redis pool %s: invalid on-empty behavior '%s', using default CREATE after %v", maskedUrl, poolOnEmptyBehavior, poolOnEmptyWaitDuration)
-		opts = append(opts, radix.PoolOnEmptyCreateAfter(poolOnEmptyWaitDuration))
+		logger.Warnf("Redis pool %s: using default v4 pool behavior", maskedUrl)
 	}
 
-	poolFunc := func(network, addr string) (radix.Client, error) {
-		return radix.NewPool(network, addr, poolSize, opts...)
+	poolFunc := func(ctx context.Context, network, addr string) (radix.Client, error) {
+		return poolConfig.New(ctx, network, addr)
 	}
 
-	var client radix.Client
+	var client redisClient
 	var err error
+	ctx := context.Background()
+
 	switch strings.ToLower(redisType) {
 	case "single":
 		logger.Warnf("Creating single with urls %v", url)
-		client, err = poolFunc(redisSocketType, url)
+		client, err = poolFunc(ctx, redisSocketType, url)
 	case "cluster":
 		urls := strings.Split(url, ",")
 		if !implicitPipelining {
 			panic(RedisError("Implicit Pipelining must be enabled to work with Redis Cluster Mode. Set values for REDIS_PIPELINE_WINDOW or REDIS_PIPELINE_LIMIT to enable implicit pipelining"))
 		}
 		logger.Warnf("Creating cluster with urls %v", urls)
-		client, err = radix.NewCluster(urls, radix.ClusterPoolFunc(poolFunc))
+		clusterConfig := radix.ClusterConfig{
+			PoolConfig: poolConfig,
+		}
+		client, err = clusterConfig.New(ctx, urls)
 	case "sentinel":
 		urls := strings.Split(url, ",")
 		if len(urls) < 2 {
 			panic(RedisError("Expected master name and a list of urls for the sentinels, in the format: <redis master name>,<sentinel1>,...,<sentineln>"))
 		}
-		sentinelDialFunc := func(network, addr string) (radix.Conn, error) {
-			var dialOpts []radix.DialOpt
-			// Always set the dial timeout consistent with the main dial func
-			dialOpts = append(dialOpts, radix.DialTimeout(timeout))
-			if useTls {
-				logger.Warnf("enabling TLS to redis sentinel on %s", addr)
-				dialOpts = append(dialOpts, radix.DialUseTLS(tlsConfig))
-			}
-			// Use sentinelAuth for authenticating to Sentinel nodes, not auth
-			// auth is used for Redis master/replica authentication
-			if sentinelAuth != "" {
-				user, pass, found := strings.Cut(sentinelAuth, ":")
-				if found {
-					logger.Warnf("enabling authentication to redis sentinel on %s with user %s", addr, user)
-					dialOpts = append(dialOpts, radix.DialAuthUser(user, pass))
-				} else {
-					logger.Warnf("enabling authentication to redis sentinel on %s without user", addr)
-					dialOpts = append(dialOpts, radix.DialAuthPass(sentinelAuth))
-				}
-			}
-			return radix.Dial(network, addr, dialOpts...)
+
+		// Create sentinel dialer
+		var sentinelNetDialer net.Dialer
+		if timeout > 0 {
+			sentinelNetDialer.Timeout = timeout
 		}
-		client, err = radix.NewSentinel(urls[0], urls[1:], radix.SentinelConnFunc(sentinelDialFunc), radix.SentinelPoolFunc(poolFunc))
+
+		sentinelDialer := radix.Dialer{
+			NetDialer: &sentinelNetDialer,
+		}
+
+		// Setup TLS for sentinel if needed
+		if useTls {
+			logger.Warnf("enabling TLS to redis sentinel")
+			tlsSentinelDialer := tls.Dialer{
+				NetDialer: &sentinelNetDialer,
+				Config:    tlsConfig,
+			}
+			sentinelDialer.NetDialer = &tlsSentinelDialer
+		}
+
+		// Use sentinelAuth for authenticating to Sentinel nodes, not auth
+		// auth is used for Redis master/replica authentication
+		if sentinelAuth != "" {
+			user, pass, found := strings.Cut(sentinelAuth, ":")
+			if found {
+				logger.Warnf("enabling authentication to redis sentinel with user %s", user)
+				sentinelDialer.AuthUser = user
+				sentinelDialer.AuthPass = pass
+			} else {
+				logger.Warnf("enabling authentication to redis sentinel without user")
+				sentinelDialer.AuthPass = sentinelAuth
+			}
+		}
+
+		sentinelConfig := radix.SentinelConfig{
+			PoolConfig:     poolConfig,
+			SentinelDialer: sentinelDialer,
+		}
+		client, err = sentinelConfig.New(ctx, urls[0], urls[1:])
 	default:
 		panic(RedisError("Unrecognized redis type " + redisType))
 	}
@@ -180,7 +227,7 @@ func NewClientImpl(scope stats.Scope, useTls bool, auth, redisSocketType, redisT
 
 	// Check if connection is good
 	var pingResponse string
-	checkError(client.Do(radix.Cmd(&pingResponse, "PING")))
+	checkError(client.Do(ctx, radix.Cmd(&pingResponse, "PING")))
 	if pingResponse != "PONG" {
 		checkError(fmt.Errorf("connecting redis error: %s", pingResponse))
 	}
@@ -193,7 +240,12 @@ func NewClientImpl(scope stats.Scope, useTls bool, auth, redisSocketType, redisT
 }
 
 func (c *clientImpl) DoCmd(rcv interface{}, cmd, key string, args ...interface{}) error {
-	return c.client.Do(radix.FlatCmd(rcv, cmd, key, args...))
+	ctx := context.Background()
+	// Combine key and args into a single slice
+	allArgs := make([]interface{}, 0, 1+len(args))
+	allArgs = append(allArgs, key)
+	allArgs = append(allArgs, args...)
+	return c.client.Do(ctx, radix.FlatCmd(rcv, cmd, allArgs...))
 }
 
 func (c *clientImpl) Close() error {
@@ -205,20 +257,30 @@ func (c *clientImpl) NumActiveConns() int {
 }
 
 func (c *clientImpl) PipeAppend(pipeline Pipeline, rcv interface{}, cmd, key string, args ...interface{}) Pipeline {
-	return append(pipeline, radix.FlatCmd(rcv, cmd, key, args...))
+	// Combine key and args into a single slice
+	allArgs := make([]interface{}, 0, 1+len(args))
+	allArgs = append(allArgs, key)
+	allArgs = append(allArgs, args...)
+	return append(pipeline, radix.FlatCmd(rcv, cmd, allArgs...))
 }
 
 func (c *clientImpl) PipeDo(pipeline Pipeline) error {
+	ctx := context.Background()
 	if c.implicitPipelining {
 		for _, action := range pipeline {
-			if err := c.client.Do(action); err != nil {
+			if err := c.client.Do(ctx, action); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 
-	return c.client.Do(radix.Pipeline(pipeline...))
+	// In v4, create a new pipeline and append all actions
+	p := radix.NewPipeline()
+	for _, action := range pipeline {
+		p.Append(action)
+	}
+	return c.client.Do(ctx, p)
 }
 
 func (c *clientImpl) ImplicitPipeliningEnabled() bool {

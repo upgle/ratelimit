@@ -1,6 +1,6 @@
 package redis
 
-import "github.com/mediocregopher/radix/v3"
+import "github.com/mediocregopher/radix/v4"
 
 // Errors that may be raised during config parsing.
 type RedisError string
@@ -46,4 +46,4 @@ type Client interface {
 	ImplicitPipeliningEnabled() bool
 }
 
-type Pipeline []radix.CmdAction
+type Pipeline []radix.Action
