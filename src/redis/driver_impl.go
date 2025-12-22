@@ -135,6 +135,7 @@ func NewClientImpl(scope stats.Scope, useTls bool, auth, redisSocketType, redisT
 	var err error
 	switch strings.ToLower(redisType) {
 	case "single":
+		logger.Warnf("Creating single with urls %v", url)
 		client, err = poolFunc(redisSocketType, url)
 	case "cluster":
 		urls := strings.Split(url, ",")
