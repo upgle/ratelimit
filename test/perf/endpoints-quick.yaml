@@ -1,0 +1,33 @@
+# Quick test configuration with fewer endpoints
+test_settings:
+  concurrency: 50
+  duration: 5s
+  warmup: 1s
+  connections: 10
+
+endpoints:
+  # Redis baseline (no optimizations)
+  - name: "redis-baseline"
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: SINGLE
+      REDIS_URL: localhost:6379
+      REDIS_POOL_SIZE: 10
+      REDIS_PIPELINE_WINDOW: "0"
+      REDIS_PIPELINE_LIMIT: 0
+      HOT_KEY_DETECTION_ENABLED: "false"
+
+  # Redis with hot key detection
+  - name: "redis-hotkey"
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: SINGLE
+      REDIS_URL: localhost:6379
+      REDIS_POOL_SIZE: 10
+      REDIS_PIPELINE_WINDOW: "0"
+      REDIS_PIPELINE_LIMIT: 0
+      HOT_KEY_DETECTION_ENABLED: "true"
+      HOT_KEY_THRESHOLD: 100
+      HOT_KEY_FLUSH_WINDOW: "100us"

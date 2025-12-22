@@ -1,0 +1,147 @@
+# Comprehensive Redis tuning test
+# Tests various combinations of hotkey and pipeline settings
+
+test_settings:
+  concurrency: 100
+  duration: 10s
+  warmup: 2s
+  connections: 10
+
+endpoints:
+  # ==========================================================================
+  # Redis Standalone Tests
+  # ==========================================================================
+
+  # Baseline - no optimizations
+  - name: "standalone-baseline"
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: SINGLE
+      REDIS_URL: localhost:6379
+      REDIS_POOL_SIZE: 10
+      REDIS_PIPELINE_WINDOW: "0"
+      REDIS_PIPELINE_LIMIT: 0
+      HOT_KEY_DETECTION_ENABLED: "false"
+
+  # HotKey only
+  - name: "standalone-hotkey"
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: SINGLE
+      REDIS_URL: localhost:6379
+      REDIS_POOL_SIZE: 10
+      REDIS_PIPELINE_WINDOW: "0"
+      REDIS_PIPELINE_LIMIT: 0
+      HOT_KEY_DETECTION_ENABLED: "true"
+      HOT_KEY_THRESHOLD: 100
+      HOT_KEY_FLUSH_WINDOW: "100us"
+
+  # HotKey with lower threshold (more aggressive)
+  - name: "standalone-hotkey-t50"
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: SINGLE
+      REDIS_URL: localhost:6379
+      REDIS_POOL_SIZE: 10
+      REDIS_PIPELINE_WINDOW: "0"
+      REDIS_PIPELINE_LIMIT: 0
+      HOT_KEY_DETECTION_ENABLED: "true"
+      HOT_KEY_THRESHOLD: 50
+      HOT_KEY_FLUSH_WINDOW: "100us"
+
+  # ==========================================================================
+  # Redis Cluster Tests - Pipeline Required
+  # ==========================================================================
+
+  # Cluster - small pipeline (150us/8)
+  - name: "cluster-pipe-150us-8"
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: CLUSTER
+      REDIS_URL: localhost:7001
+      REDIS_POOL_SIZE: 10
+      REDIS_PIPELINE_WINDOW: "150us"
+      REDIS_PIPELINE_LIMIT: 8
+      HOT_KEY_DETECTION_ENABLED: "false"
+
+  # Cluster - medium pipeline (500us/16)
+  - name: "cluster-pipe-500us-16"
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: CLUSTER
+      REDIS_URL: localhost:7001
+      REDIS_POOL_SIZE: 10
+      REDIS_PIPELINE_WINDOW: "500us"
+      REDIS_PIPELINE_LIMIT: 16
+      HOT_KEY_DETECTION_ENABLED: "false"
+
+  # Cluster - large pipeline (1ms/32)
+  - name: "cluster-pipe-1ms-32"
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: CLUSTER
+      REDIS_URL: localhost:7001
+      REDIS_POOL_SIZE: 10
+      REDIS_PIPELINE_WINDOW: "1ms"
+      REDIS_PIPELINE_LIMIT: 32
+      HOT_KEY_DETECTION_ENABLED: "false"
+
+  # Cluster - very large pipeline (2ms/64)
+  - name: "cluster-pipe-2ms-64"
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: CLUSTER
+      REDIS_URL: localhost:7001
+      REDIS_POOL_SIZE: 10
+      REDIS_PIPELINE_WINDOW: "2ms"
+      REDIS_PIPELINE_LIMIT: 64
+      HOT_KEY_DETECTION_ENABLED: "false"
+
+  # Cluster + HotKey (150us/8)
+  - name: "cluster-hotkey-150us-8"
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: CLUSTER
+      REDIS_URL: localhost:7001
+      REDIS_POOL_SIZE: 10
+      REDIS_PIPELINE_WINDOW: "150us"
+      REDIS_PIPELINE_LIMIT: 8
+      HOT_KEY_DETECTION_ENABLED: "true"
+      HOT_KEY_THRESHOLD: 100
+      HOT_KEY_FLUSH_WINDOW: "100us"
+
+  # Cluster + HotKey (500us/16)
+  - name: "cluster-hotkey-500us-16"
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: CLUSTER
+      REDIS_URL: localhost:7001
+      REDIS_POOL_SIZE: 10
+      REDIS_PIPELINE_WINDOW: "500us"
+      REDIS_PIPELINE_LIMIT: 16
+      HOT_KEY_DETECTION_ENABLED: "true"
+      HOT_KEY_THRESHOLD: 100
+      HOT_KEY_FLUSH_WINDOW: "100us"
+
+  # Cluster + HotKey (1ms/32)
+  - name: "cluster-hotkey-1ms-32"
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: CLUSTER
+      REDIS_URL: localhost:7001
+      REDIS_POOL_SIZE: 10
+      REDIS_PIPELINE_WINDOW: "1ms"
+      REDIS_PIPELINE_LIMIT: 32
+      HOT_KEY_DETECTION_ENABLED: "true"
+      HOT_KEY_THRESHOLD: 100
+      HOT_KEY_FLUSH_WINDOW: "100us"

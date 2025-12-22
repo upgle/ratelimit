@@ -1,0 +1,47 @@
+# Performance comparison: Redis vs Redis Cluster vs Memcached
+test_settings:
+  concurrency: 100
+  duration: 5s
+  warmup: 2s
+  connections: 10
+
+endpoints:
+  # ============================================================================
+  # Redis Cluster (ports 7001-7003) - Pipeline required for cluster mode
+  # ============================================================================
+#  - name: "redis-cluster-pipe(150us,0)"
+#    type: redis
+#    settings:
+#      REDIS_SOCKET_TYPE: tcp
+#      REDIS_TYPE: CLUSTER
+#      REDIS_URL: localhost:7001
+#      REDIS_POOL_SIZE: 10
+#      REDIS_PIPELINE_WINDOW: "150us"
+#      REDIS_PIPELINE_LIMIT: 8
+#      HOT_KEY_DETECTION_ENABLED: "false"
+#
+#  - name: "redis-cluster-hotkey(100us)-pipe(150us,0)"
+#    type: redis
+#    settings:
+#      REDIS_SOCKET_TYPE: tcp
+#      REDIS_TYPE: CLUSTER
+#      REDIS_URL: localhost:7001
+#      REDIS_POOL_SIZE: 10
+#      REDIS_PIPELINE_WINDOW: "150us"
+#      REDIS_PIPELINE_LIMIT: 8
+#      HOT_KEY_DETECTION_ENABLED: "true"
+#      HOT_KEY_THRESHOLD: 100
+#      HOT_KEY_FLUSH_WINDOW: "100us"
+
+  - name: "redis-cluster-hotkey"
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: CLUSTER
+      REDIS_URL: localhost:7001
+      REDIS_POOL_SIZE: 50
+      REDIS_PIPELINE_WINDOW: "50us"
+      REDIS_PIPELINE_LIMIT: 0
+      HOT_KEY_DETECTION_ENABLED: "false"
+      HOT_KEY_THRESHOLD: 10
+      HOT_KEY_FLUSH_WINDOW: "300us"

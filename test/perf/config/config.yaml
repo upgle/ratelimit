@@ -1,0 +1,91 @@
+---
+domain: perf_test
+descriptors:
+  # ==========================================================================
+  # Fixed key - for hot key scenario testing (single key)
+  # ==========================================================================
+  - key: api_key
+    value: fixed_key
+    rate_limit:
+      unit: minute
+      requests_per_unit: 100000000
+
+  # ==========================================================================
+  # Variable key pattern - for unique key scenario testing (wildcard)
+  # ==========================================================================
+  - key: api_key
+    rate_limit:
+      unit: minute
+      requests_per_unit: 100000000
+
+  # ==========================================================================
+  # Mixed 2 keys scenario (nested: fixed_1 -> var_1)
+  # ==========================================================================
+  - key: nested_fixed_1
+    value: value_1
+    descriptors:
+      - key: var_1
+        rate_limit:
+          unit: minute
+          requests_per_unit: 100000000
+
+  # ==========================================================================
+  # Mixed 10 keys scenario - 5 fixed keys with specific values
+  # ==========================================================================
+  - key: fixed_1
+    value: value_1
+    rate_limit:
+      unit: minute
+      requests_per_unit: 100000000
+
+  - key: fixed_2
+    value: value_2
+    rate_limit:
+      unit: minute
+      requests_per_unit: 100000000
+
+  - key: fixed_3
+    value: value_3
+    rate_limit:
+      unit: minute
+      requests_per_unit: 100000000
+
+  - key: fixed_4
+    value: value_4
+    rate_limit:
+      unit: minute
+      requests_per_unit: 100000000
+
+  - key: fixed_5
+    value: value_5
+    rate_limit:
+      unit: minute
+      requests_per_unit: 100000000
+
+  # ==========================================================================
+  # Mixed 10 keys scenario - 5 variable keys (wildcard match)
+  # ==========================================================================
+  - key: var_1
+    rate_limit:
+      unit: minute
+      requests_per_unit: 100000000
+
+  - key: var_2
+    rate_limit:
+      unit: minute
+      requests_per_unit: 100000000
+
+  - key: var_3
+    rate_limit:
+      unit: minute
+      requests_per_unit: 100000000
+
+  - key: var_4
+    rate_limit:
+      unit: minute
+      requests_per_unit: 100000000
+
+  - key: var_5
+    rate_limit:
+      unit: minute
+      requests_per_unit: 100000000

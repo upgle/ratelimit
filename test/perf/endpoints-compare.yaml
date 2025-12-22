@@ -1,0 +1,71 @@
+# Performance comparison: Redis vs Redis Cluster vs Memcached
+test_settings:
+  concurrency: 100
+  duration: 10s
+  warmup: 2s
+  connections: 10
+
+endpoints:
+  # ============================================================================
+  # Redis Standalone (port 6379)
+  # ============================================================================
+  - name: "redis-standalone"
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: SINGLE
+      REDIS_URL: localhost:6379
+      REDIS_POOL_SIZE: 10
+      REDIS_PIPELINE_WINDOW: "0"
+      REDIS_PIPELINE_LIMIT: 0
+      HOT_KEY_DETECTION_ENABLED: "false"
+
+  - name: "redis-standalone-hotkey"
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: SINGLE
+      REDIS_URL: localhost:6379
+      REDIS_POOL_SIZE: 10
+      REDIS_PIPELINE_WINDOW: "0"
+      REDIS_PIPELINE_LIMIT: 0
+      HOT_KEY_DETECTION_ENABLED: "true"
+      HOT_KEY_THRESHOLD: 100
+      HOT_KEY_FLUSH_WINDOW: "100us"
+
+  # ============================================================================
+  # Redis Cluster (ports 7001-7003) - Pipeline required for cluster mode
+  # ============================================================================
+  - name: "redis-cluster"
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: CLUSTER
+      REDIS_URL: localhost:7001
+      REDIS_POOL_SIZE: 10
+      REDIS_PIPELINE_WINDOW: "150us"
+      REDIS_PIPELINE_LIMIT: 8
+      HOT_KEY_DETECTION_ENABLED: "false"
+
+  - name: "redis-cluster-hotkey"
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: CLUSTER
+      REDIS_URL: localhost:7001
+      REDIS_POOL_SIZE: 10
+      REDIS_PIPELINE_WINDOW: "150us"
+      REDIS_PIPELINE_LIMIT: 8
+      HOT_KEY_DETECTION_ENABLED: "true"
+      HOT_KEY_THRESHOLD: 100
+      HOT_KEY_FLUSH_WINDOW: "100us"
+
+  # ============================================================================
+  # Memcached (port 11211)
+  # ============================================================================
+  - name: "memcached"
+    type: memcached
+    settings:
+      BACKEND_TYPE: memcache
+      MEMCACHE_HOST_PORT: localhost:11211
+      MEMCACHE_MAX_IDLE_CONNS: 10

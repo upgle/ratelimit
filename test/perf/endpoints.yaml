@@ -1,0 +1,153 @@
+# Comprehensive Performance Test Configuration
+# This configuration tests various backends and settings combinations
+
+test_settings:
+  concurrency: 100       # Number of concurrent workers
+  duration: 10s          # Test duration per scenario
+  warmup: 2s            # Warmup duration
+  connections: 10       # Number of gRPC connections
+
+endpoints:
+  # ============================================================================
+  # Redis Standalone Tests
+  # ============================================================================
+
+  # Baseline: No optimization
+  - name: redis_baseline
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: single
+      REDIS_URL: localhost:6379
+      REDIS_POOL_SIZE: "10"
+      REDIS_PIPELINE_WINDOW: "0"
+      REDIS_PIPELINE_LIMIT: "0"
+      HOTKEY_DETECTION_ENABLED: "false"
+      HOTKEY_BATCHING_ENABLED: "false"
+
+  # Hot key detection enabled
+  - name: redis_hotkey_enabled
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: single
+      REDIS_URL: localhost:6379
+      REDIS_POOL_SIZE: "10"
+      REDIS_PIPELINE_WINDOW: "0"
+      REDIS_PIPELINE_LIMIT: "0"
+      HOTKEY_DETECTION_ENABLED: "true"
+      HOTKEY_DETECTION_THRESHOLD: "100"
+      HOTKEY_BATCHING_ENABLED: "true"
+      HOTKEY_BATCHING_FLUSH_INTERVAL: "300us"
+
+  # Pipeline enabled - 75us window
+  - name: redis_pipeline_75us
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: single
+      REDIS_URL: localhost:6379
+      REDIS_POOL_SIZE: "10"
+      REDIS_PIPELINE_WINDOW: "75us"
+      REDIS_PIPELINE_LIMIT: "4"
+      HOTKEY_DETECTION_ENABLED: "false"
+      HOTKEY_BATCHING_ENABLED: "false"
+
+  # Pipeline enabled - 150us window
+  - name: redis_pipeline_150us
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: single
+      REDIS_URL: localhost:6379
+      REDIS_POOL_SIZE: "10"
+      REDIS_PIPELINE_WINDOW: "150us"
+      REDIS_PIPELINE_LIMIT: "8"
+      HOTKEY_DETECTION_ENABLED: "false"
+      HOTKEY_BATCHING_ENABLED: "false"
+
+  # Hot key + Pipeline combination (optimal)
+  - name: redis_hotkey_pipeline_opt
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: single
+      REDIS_URL: localhost:6379
+      REDIS_POOL_SIZE: "10"
+      REDIS_PIPELINE_WINDOW: "150us"
+      REDIS_PIPELINE_LIMIT: "8"
+      HOTKEY_DETECTION_ENABLED: "true"
+      HOTKEY_DETECTION_THRESHOLD: "100"
+      HOTKEY_BATCHING_ENABLED: "true"
+      HOTKEY_BATCHING_FLUSH_INTERVAL: "300us"
+
+  # ============================================================================
+  # Redis Cluster Tests
+  # ============================================================================
+
+  # Cluster baseline
+  - name: cluster_baseline
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: cluster
+      REDIS_URL: localhost:7001,localhost:7002,localhost:7003
+      REDIS_POOL_SIZE: "10"
+      REDIS_PIPELINE_WINDOW: "0"
+      REDIS_PIPELINE_LIMIT: "0"
+      HOTKEY_DETECTION_ENABLED: "false"
+      HOTKEY_BATCHING_ENABLED: "false"
+
+  # Cluster with hot key detection
+  - name: cluster_hotkey
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: cluster
+      REDIS_URL: localhost:7001,localhost:7002,localhost:7003
+      REDIS_POOL_SIZE: "10"
+      REDIS_PIPELINE_WINDOW: "0"
+      REDIS_PIPELINE_LIMIT: "0"
+      HOTKEY_DETECTION_ENABLED: "true"
+      HOTKEY_DETECTION_THRESHOLD: "100"
+      HOTKEY_BATCHING_ENABLED: "true"
+      HOTKEY_BATCHING_FLUSH_INTERVAL: "300us"
+
+  # Cluster with hot key + pipeline (optimal)
+  - name: cluster_hotkey_pipeline_opt
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: cluster
+      REDIS_URL: localhost:7001,localhost:7002,localhost:7003
+      REDIS_POOL_SIZE: "10"
+      REDIS_PIPELINE_WINDOW: "150us"
+      REDIS_PIPELINE_LIMIT: "8"
+      HOTKEY_DETECTION_ENABLED: "true"
+      HOTKEY_DETECTION_THRESHOLD: "100"
+      HOTKEY_BATCHING_ENABLED: "true"
+      HOTKEY_BATCHING_FLUSH_INTERVAL: "300us"
+
+  # ============================================================================
+  # Memcached Tests
+  # ============================================================================
+
+  # Memcached baseline
+  - name: memcached_baseline
+    type: memcached
+    settings:
+      BACKEND_TYPE: memcache
+      MEMCACHE_HOST_PORT: localhost:11211
+      MEMCACHE_MAX_IDLE_CONNS: "10"
+
+  # Memcached with hot key detection
+  - name: memcached_hotkey
+    type: memcached
+    settings:
+      BACKEND_TYPE: memcache
+      MEMCACHE_HOST_PORT: localhost:11211
+      MEMCACHE_MAX_IDLE_CONNS: "10"
+      HOTKEY_DETECTION_ENABLED: "true"
+      HOTKEY_DETECTION_THRESHOLD: "100"
+      HOTKEY_BATCHING_ENABLED: "true"
+      HOTKEY_BATCHING_FLUSH_INTERVAL: "300us"
