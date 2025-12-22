@@ -16,3 +16,13 @@ dump.rdb
 # Directories created by "test_with_redis" make target.
 63*
 26*
+
+# Claude Code local settings (personal preferences)
+.claude/CLAUDE.local.md
+.claude/settings.local.json
+
+# Performance test results
+test/perf/results/
+
+# macOS system files
+.DS_Store
