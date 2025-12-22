@@ -1,0 +1,273 @@
+version: "3.8"
+
+# Performance Test Infrastructure
+# Includes Redis standalone, Redis cluster, Memcached, and monitoring stack
+
+services:
+  # ==========================================================================
+  # Redis Standalone
+  # ==========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: redis-standalone
+    ports:
+      - "6379:6379"
+    command: redis-server --bind 0.0.0.0 --protected-mode no
+    networks:
+      - perf-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 512M
+
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: redis-exporter
+    ports:
+      - "9121:9121"
+    environment:
+      - REDIS_ADDR=redis:6379
+    depends_on:
+      - redis
+    networks:
+      - perf-network
+
+  # ==========================================================================
+  # Redis Cluster (3 Master Nodes)
+  # ==========================================================================
+  redis-master-1:
+    image: redis:7-alpine
+    container_name: redis-master-1
+    ports:
+      - "7001:7001"
+      - "17001:17001"
+    command: >
+      redis-server
+      --port 7001
+      --cluster-enabled yes
+      --cluster-config-file nodes.conf
+      --cluster-node-timeout 5000
+      --appendonly yes
+      --bind 0.0.0.0
+      --protected-mode no
+      --cluster-announce-ip redis-master-1
+      --cluster-announce-bus-port 17001
+    volumes:
+      - redis-master-1-data:/data
+    networks:
+      - perf-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 256M
+
+  redis-master-2:
+    image: redis:7-alpine
+    container_name: redis-master-2
+    ports:
+      - "7002:7002"
+      - "17002:17002"
+    command: >
+      redis-server
+      --port 7002
+      --cluster-enabled yes
+      --cluster-config-file nodes.conf
+      --cluster-node-timeout 5000
+      --appendonly yes
+      --bind 0.0.0.0
+      --protected-mode no
+      --cluster-announce-ip redis-master-2
+      --cluster-announce-bus-port 17002
+    volumes:
+      - redis-master-2-data:/data
+    networks:
+      - perf-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 256M
+
+  redis-master-3:
+    image: redis:7-alpine
+    container_name: redis-master-3
+    ports:
+      - "7003:7003"
+      - "17003:17003"
+    command: >
+      redis-server
+      --port 7003
+      --cluster-enabled yes
+      --cluster-config-file nodes.conf
+      --cluster-node-timeout 5000
+      --appendonly yes
+      --bind 0.0.0.0
+      --protected-mode no
+      --cluster-announce-ip redis-master-3
+      --cluster-announce-bus-port 17003
+    volumes:
+      - redis-master-3-data:/data
+    networks:
+      - perf-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 256M
+
+  # Redis Cluster Initialization
+  redis-cluster-init:
+    image: redis:7-alpine
+    container_name: redis-cluster-init
+    depends_on:
+      - redis-master-1
+      - redis-master-2
+      - redis-master-3
+    command: >
+      sh -c "
+      sleep 5 &&
+      redis-cli --cluster create
+      redis-master-1:7001
+      redis-master-2:7002
+      redis-master-3:7003
+      --cluster-replicas 0 --cluster-yes
+      "
+    networks:
+      - perf-network
+
+  # Redis Cluster Exporters
+  redis-cluster-exporter-1:
+    image: oliver006/redis_exporter:latest
+    container_name: redis-cluster-exporter-1
+    ports:
+      - "9122:9121"
+    environment:
+      - REDIS_ADDR=redis-master-1:7001
+    depends_on:
+      - redis-master-1
+    networks:
+      - perf-network
+
+  redis-cluster-exporter-2:
+    image: oliver006/redis_exporter:latest
+    container_name: redis-cluster-exporter-2
+    ports:
+      - "9123:9121"
+    environment:
+      - REDIS_ADDR=redis-master-2:7002
+    depends_on:
+      - redis-master-2
+    networks:
+      - perf-network
+
+  redis-cluster-exporter-3:
+    image: oliver006/redis_exporter:latest
+    container_name: redis-cluster-exporter-3
+    ports:
+      - "9124:9121"
+    environment:
+      - REDIS_ADDR=redis-master-3:7003
+    depends_on:
+      - redis-master-3
+    networks:
+      - perf-network
+
+  # ==========================================================================
+  # Memcached
+  # ==========================================================================
+  memcached:
+    image: memcached:1.6-alpine
+    container_name: memcached
+    ports:
+      - "11211:11211"
+    command: memcached -m 256 -c 1024
+    networks:
+      - perf-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 512M
+
+  memcached-exporter:
+    image: prom/memcached-exporter:latest
+    container_name: memcached-exporter
+    ports:
+      - "9150:9150"
+    command:
+      - '--memcached.address=memcached:11211'
+    depends_on:
+      - memcached
+    networks:
+      - perf-network
+
+  # ==========================================================================
+  # Prometheus
+  # ==========================================================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus-perf.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=1d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    networks:
+      - perf-network
+
+  # Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=redis-datasource
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus
+    networks:
+      - perf-network
+
+  # ==========================================================================
+  # cAdvisor - Container Metrics (CPU, Memory)
+  # ==========================================================================
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: cadvisor
+    ports:
+      - "8090:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    privileged: true
+    networks:
+      - perf-network
+
+networks:
+  perf-network:
+    driver: bridge
+
+volumes:
+  redis-master-1-data:
+  redis-master-2-data:
+  redis-master-3-data:
+  prometheus-data:
+  grafana-data:
