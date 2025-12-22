@@ -122,6 +122,14 @@ func WaitForTcpPort(ctx context.Context, port int, timeout time.Duration) error 
 
 // startCacheProcess starts memcache or redis as a subprocess and waits until the TCP port is open.
 func startCacheProcess(ctx context.Context, command string, args []string, port int) (context.CancelFunc, error) {
+	// Check if the port is already open. If so, don't start a new process.
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "tcp", "localhost:"+strconv.Itoa(port))
+	if err == nil {
+		conn.Close()
+		return func() {}, nil
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(ctx, command, args...)
 
@@ -143,7 +151,7 @@ func startCacheProcess(ctx context.Context, command string, args []string, port 
 		io.Copy(os.Stdout, outPipe)
 	}()
 
-	err := cmd.Start()
+	err = cmd.Start()
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("problem starting %s subprocess: %v", command, err)
@@ -168,6 +176,15 @@ func WithMultiRedis(t *testing.T, configs []RedisConfig, f func()) {
 	defer cancel()
 
 	for _, config := range configs {
+		// Flush redis to ensure a clean state if using a local redis.
+		var d net.Dialer
+		conn, err := d.DialContext(ctx, "tcp", "localhost:"+strconv.Itoa(config.Port))
+		if err == nil {
+			fmt.Fprintf(os.Stderr, "Flushing existing redis on port %d\n", config.Port)
+			conn.Write([]byte("FLUSHALL\r\n"))
+			conn.Close()
+		}
+
 		args := []string{"--port", strconv.Itoa(config.Port)}
 		if config.Password != "" {
 			args = append(args, "--requirepass", config.Password)
