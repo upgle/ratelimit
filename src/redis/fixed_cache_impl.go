@@ -3,6 +3,7 @@ package redis
 import (
 	"io"
 	"math/rand"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -256,16 +257,49 @@ func (this *fixedRateLimitCacheImpl) DoLimit(
 	)
 	defer span.End()
 
-	// Execute all pipelines grouped by slot
+	// Execute all pipelines grouped by slot in parallel
+	var wg sync.WaitGroup
+	var pipelineErr error
+	var errMutex sync.Mutex
+
+	// Execute regular pipelines in parallel
 	for _, pipeline := range pipelines {
 		if len(pipeline) > 0 {
-			checkError(this.client.PipeDo(pipeline))
+			wg.Add(1)
+			go func(p Pipeline) {
+				defer wg.Done()
+				if err := this.client.PipeDo(p); err != nil {
+					errMutex.Lock()
+					if pipelineErr == nil {
+						pipelineErr = err
+					}
+					errMutex.Unlock()
+				}
+			}(pipeline)
 		}
 	}
+
+	// Execute per-second pipelines in parallel
 	for _, pipeline := range perSecondPipelines {
 		if len(pipeline) > 0 {
-			checkError(this.perSecondClient.PipeDo(pipeline))
+			wg.Add(1)
+			go func(p Pipeline) {
+				defer wg.Done()
+				if err := this.perSecondClient.PipeDo(p); err != nil {
+					errMutex.Lock()
+					if pipelineErr == nil {
+						pipelineErr = err
+					}
+					errMutex.Unlock()
+				}
+			}(pipeline)
 		}
+	}
+
+	// Wait for all pipelines to complete
+	wg.Wait()
+	if pipelineErr != nil {
+		checkError(pipelineErr)
 	}
 
 	// Wait for hot key batched results
