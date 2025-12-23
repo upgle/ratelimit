@@ -1,0 +1,41 @@
+# Performance test: Testing connection pool impact
+# Compare POOL_SIZE: 10 vs 50 vs 100
+test_settings:
+  concurrency: 100
+  duration: 10s
+  warmup: 2s
+  connections: 10
+
+endpoints:
+  - name: "pool-10"
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: cluster
+      REDIS_URL: localhost:7001
+      REDIS_POOL_SIZE: 10
+      REDIS_PIPELINE_WINDOW: "150us"
+      REDIS_PIPELINE_LIMIT: 8
+      HOT_KEY_DETECTION_ENABLED: "false"
+
+  - name: "pool-50"
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: cluster
+      REDIS_URL: localhost:7001
+      REDIS_POOL_SIZE: 50
+      REDIS_PIPELINE_WINDOW: "150us"
+      REDIS_PIPELINE_LIMIT: 8
+      HOT_KEY_DETECTION_ENABLED: "false"
+
+  - name: "pool-100"
+    type: redis
+    settings:
+      REDIS_SOCKET_TYPE: tcp
+      REDIS_TYPE: cluster
+      REDIS_URL: localhost:7001
+      REDIS_POOL_SIZE: 100
+      REDIS_PIPELINE_WINDOW: "150us"
+      REDIS_PIPELINE_LIMIT: 8
+      HOT_KEY_DETECTION_ENABLED: "false"
