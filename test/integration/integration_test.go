@@ -37,8 +37,6 @@ var projectDir = os.Getenv("PROJECT_DIR")
 
 func init() {
 	os.Setenv("USE_STATSD", "false")
-	os.Setenv("REDIS_PIPELINE_WINDOW", "100us")
-	os.Setenv("REDIS_PIPELINE_LIMIT", "10")
 	os.Setenv("HOT_KEY_DETECTION_ENABLED", "true")
 	os.Setenv("HOT_KEY_THRESHOLD", "10")
 	os.Setenv("HOT_KEY_FLUSH_WINDOW", "50us")
@@ -96,12 +94,10 @@ func makeSimpleRedisSettings(redisPort int, perSecondPort int, perSecond bool, l
 		// Docker Compose Redis Cluster setup (3 masters)
 		s.RedisType = "cluster"
 		s.RedisUrl = "127.0.0.1:7001,127.0.0.1:7002,127.0.0.1:7003"
-		s.RedisPipelineLimit = 8
 
 		if perSecond {
 			s.RedisPerSecondType = "cluster"
 			s.RedisPerSecondUrl = "127.0.0.1:7001,127.0.0.1:7002,127.0.0.1:7003"
-			s.RedisPerSecondPipelineLimit = 8
 		}
 	} else {
 		// Single Redis instance for other ports
@@ -617,9 +613,6 @@ func configRedisCluster(s *settings.Settings) {
 
 	s.RedisAuth = "password123"
 	s.RedisPerSecondAuth = "password123"
-
-	s.RedisPerSecondPipelineLimit = 8
-	s.RedisPipelineLimit = 8
 }
 
 func testBasicConfigWithoutWatchRootWithRedisCluster(perSecond bool, local_cache_size int) func(*testing.T) {

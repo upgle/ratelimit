@@ -42,8 +42,12 @@ type Client interface {
 	// NumActiveConns return number of active connections, used in testing.
 	NumActiveConns() int
 
-	// ImplicitPipeliningEnabled return true if implicit pipelining is enabled.
-	ImplicitPipeliningEnabled() bool
+	// IsCluster returns true if this client is connected to a Redis Cluster
+	IsCluster() bool
+
+	// GetSlot returns the cluster slot for a given key.
+	// For non-cluster clients, this always returns 0.
+	GetSlot(key string) uint16
 }
 
 type Pipeline []radix.Action

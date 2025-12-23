@@ -122,16 +122,14 @@ type JSONTestConfig struct {
 }
 
 type JSONEndpointSettings struct {
-	RedisType           string `json:"redis_type,omitempty"`
-	RedisURL            string `json:"redis_url,omitempty"`
-	RedisPoolSize       string `json:"redis_pool_size,omitempty"`
-	RedisPipelineWindow string `json:"redis_pipeline_window,omitempty"`
-	RedisPipelineLimit  string `json:"redis_pipeline_limit,omitempty"`
-	HotKeyEnabled       string `json:"hotkey_enabled,omitempty"`
-	HotKeyThreshold     string `json:"hotkey_threshold,omitempty"`
-	HotKeyFlushWindow   string `json:"hotkey_flush_window,omitempty"`
-	BackendType         string `json:"backend_type,omitempty"`
-	MemcacheHostPort    string `json:"memcache_host_port,omitempty"`
+	RedisType         string `json:"redis_type,omitempty"`
+	RedisURL          string `json:"redis_url,omitempty"`
+	RedisPoolSize     string `json:"redis_pool_size,omitempty"`
+	HotKeyEnabled     string `json:"hotkey_enabled,omitempty"`
+	HotKeyThreshold   string `json:"hotkey_threshold,omitempty"`
+	HotKeyFlushWindow string `json:"hotkey_flush_window,omitempty"`
+	BackendType       string `json:"backend_type,omitempty"`
+	MemcacheHostPort  string `json:"memcache_host_port,omitempty"`
 }
 
 type JSONResult struct {
@@ -501,10 +499,6 @@ func parseSettings(settingsStr string) JSONEndpointSettings {
 			settings.RedisURL = value
 		case "REDIS_POOL_SIZE":
 			settings.RedisPoolSize = value
-		case "REDIS_PIPELINE_WINDOW":
-			settings.RedisPipelineWindow = value
-		case "REDIS_PIPELINE_LIMIT":
-			settings.RedisPipelineLimit = value
 		case "HOT_KEY_DETECTION_ENABLED":
 			settings.HotKeyEnabled = value
 		case "HOT_KEY_THRESHOLD":

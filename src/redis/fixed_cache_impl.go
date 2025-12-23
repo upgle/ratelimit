@@ -104,7 +104,13 @@ func (this *fixedRateLimitCacheImpl) DoLimit(
 	isOverLimitWithLocalCache := make([]bool, len(request.Descriptors))
 	results := make([]uint64, len(request.Descriptors))
 	currentCount := make([]uint64, len(request.Descriptors))
-	var pipeline, perSecondPipeline, pipelineToGet, perSecondPipelineToGet Pipeline
+
+	// For cluster support, we group pipelines by slot
+	// Map: slot -> pipeline
+	pipelines := make(map[uint16]Pipeline)
+	perSecondPipelines := make(map[uint16]Pipeline)
+	pipelinesToGet := make(map[uint16]Pipeline)
+	perSecondPipelinesToGet := make(map[uint16]Pipeline)
 
 	overlimitIndexes := make([]bool, len(request.Descriptors))
 	nearlimitIndexes := make([]bool, len(request.Descriptors))
@@ -139,23 +145,28 @@ func (this *fixedRateLimitCacheImpl) DoLimit(
 			}
 
 			if this.perSecondClient != nil && cacheKey.PerSecond {
-				if perSecondPipelineToGet == nil {
-					perSecondPipelineToGet = Pipeline{}
-				}
-				pipelineAppendtoGet(this.perSecondClient, &perSecondPipelineToGet, cacheKey.Key, &currentCount[i])
+				slot := this.perSecondClient.GetSlot(cacheKey.Key)
+				pipeline := perSecondPipelinesToGet[slot]
+				pipelineAppendtoGet(this.perSecondClient, &pipeline, cacheKey.Key, &currentCount[i])
+				perSecondPipelinesToGet[slot] = pipeline
 			} else {
-				if pipelineToGet == nil {
-					pipelineToGet = Pipeline{}
-				}
-				pipelineAppendtoGet(this.client, &pipelineToGet, cacheKey.Key, &currentCount[i])
+				slot := this.client.GetSlot(cacheKey.Key)
+				pipeline := pipelinesToGet[slot]
+				pipelineAppendtoGet(this.client, &pipeline, cacheKey.Key, &currentCount[i])
+				pipelinesToGet[slot] = pipeline
 			}
 		}
 
-		if pipelineToGet != nil {
-			checkError(this.client.PipeDo(pipelineToGet))
+		// Execute all GET pipelines grouped by slot
+		for _, pipeline := range pipelinesToGet {
+			if len(pipeline) > 0 {
+				checkError(this.client.PipeDo(pipeline))
+			}
 		}
-		if perSecondPipelineToGet != nil {
-			checkError(this.perSecondClient.PipeDo(perSecondPipelineToGet))
+		for _, pipeline := range perSecondPipelinesToGet {
+			if len(pipeline) > 0 {
+				checkError(this.perSecondClient.PipeDo(pipeline))
+			}
 		}
 
 		for i, cacheKey := range cacheKeys {
@@ -201,11 +212,11 @@ func (this *fixedRateLimitCacheImpl) DoLimit(
 				logger.Debugf("hot key detected (per-second): %s", cacheKey.Key)
 				hotKeyResultChans[i] = this.perSecondBatcher.Submit(cacheKey.Key, hitsAddend, expirationSeconds)
 			} else {
-				// Normal key: add to pipeline
-				if perSecondPipeline == nil {
-					perSecondPipeline = Pipeline{}
-				}
-				pipelineAppend(this.perSecondClient, &perSecondPipeline, cacheKey.Key, hitsAddend, &results[i], expirationSeconds)
+				// Normal key: add to pipeline (grouped by slot for cluster support)
+				slot := this.perSecondClient.GetSlot(cacheKey.Key)
+				pipeline := perSecondPipelines[slot]
+				pipelineAppend(this.perSecondClient, &pipeline, cacheKey.Key, hitsAddend, &results[i], expirationSeconds)
+				perSecondPipelines[slot] = pipeline
 			}
 		} else {
 			// Check if this is a hot key and should be batched
@@ -214,30 +225,47 @@ func (this *fixedRateLimitCacheImpl) DoLimit(
 				logger.Debugf("hot key detected: %s", cacheKey.Key)
 				hotKeyResultChans[i] = this.hotKeyBatcher.Submit(cacheKey.Key, hitsAddend, expirationSeconds)
 			} else {
-				// Normal key: add to pipeline
-				if pipeline == nil {
-					pipeline = Pipeline{}
-				}
+				// Normal key: add to pipeline (grouped by slot for cluster support)
+				slot := this.client.GetSlot(cacheKey.Key)
+				pipeline := pipelines[slot]
 				pipelineAppend(this.client, &pipeline, cacheKey.Key, hitsAddend, &results[i], expirationSeconds)
+				pipelines[slot] = pipeline
 			}
 		}
+	}
+
+	// Calculate total pipeline lengths for tracing
+	totalPipelineLen := 0
+	for _, p := range pipelines {
+		totalPipelineLen += len(p)
+	}
+	totalPerSecondPipelineLen := 0
+	for _, p := range perSecondPipelines {
+		totalPerSecondPipelineLen += len(p)
 	}
 
 	// Generate trace
 	_, span := tracer.Start(ctx, "Redis Pipeline Execution",
 		trace.WithAttributes(
-			attribute.Int("pipeline length", len(pipeline)),
-			attribute.Int("perSecondPipeline length", len(perSecondPipeline)),
+			attribute.Int("pipeline length", totalPipelineLen),
+			attribute.Int("perSecondPipeline length", totalPerSecondPipelineLen),
 			attribute.Int("hotKeyBatched count", len(hotKeyResultChans)),
+			attribute.Int("pipeline slots", len(pipelines)),
+			attribute.Int("perSecondPipeline slots", len(perSecondPipelines)),
 		),
 	)
 	defer span.End()
 
-	if pipeline != nil {
-		checkError(this.client.PipeDo(pipeline))
+	// Execute all pipelines grouped by slot
+	for _, pipeline := range pipelines {
+		if len(pipeline) > 0 {
+			checkError(this.client.PipeDo(pipeline))
+		}
 	}
-	if perSecondPipeline != nil {
-		checkError(this.perSecondClient.PipeDo(perSecondPipeline))
+	for _, pipeline := range perSecondPipelines {
+		if len(pipeline) > 0 {
+			checkError(this.perSecondClient.PipeDo(pipeline))
+		}
 	}
 
 	// Wait for hot key batched results

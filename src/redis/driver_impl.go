@@ -68,9 +68,9 @@ type redisClient interface {
 }
 
 type clientImpl struct {
-	client             redisClient
-	stats              poolStats
-	implicitPipelining bool
+	client    redisClient
+	stats     poolStats
+	isCluster bool
 }
 
 func checkError(err error) {
@@ -80,7 +80,7 @@ func checkError(err error) {
 }
 
 func NewClientImpl(scope stats.Scope, useTls bool, auth, redisSocketType, redisType, url string, poolSize int,
-	pipelineWindow time.Duration, pipelineLimit int, tlsConfig *tls.Config, healthCheckActiveConnection bool, srv server.Server,
+	tlsConfig *tls.Config, healthCheckActiveConnection bool, srv server.Server,
 	timeout time.Duration, poolOnEmptyBehavior string, poolOnEmptyWaitDuration time.Duration, sentinelAuth string,
 ) Client {
 	maskedUrl := utils.MaskCredentialsInUrl(url)
@@ -126,19 +126,6 @@ func NewClientImpl(scope stats.Scope, useTls bool, auth, redisSocketType, redisT
 		Trace:  poolTrace(&stats, healthCheckActiveConnection, srv),
 	}
 
-	// Note: radix v4 handles pipelining differently than v3
-	// PipelineWindow and PipelineConcurrency are not direct config options
-	// Pipelining in v4 is managed via Dialer.WriteFlushInterval
-	implicitPipelining := true
-	if pipelineWindow == 0 && pipelineLimit == 0 {
-		implicitPipelining = false
-	} else {
-		// Set WriteFlushInterval for implicit pipelining
-		poolConfig.Dialer.WriteFlushInterval = pipelineWindow
-		logger.Debugf("Setting WriteFlushInterval to %v for implicit pipelining", pipelineWindow)
-	}
-	logger.Debugf("Implicit pipelining enabled: %v", implicitPipelining)
-
 	// Note: v4 doesn't have direct equivalents for PoolOnEmpty* options
 	// These would need to be handled differently or may not be available
 	switch strings.ToUpper(poolOnEmptyBehavior) {
@@ -158,22 +145,22 @@ func NewClientImpl(scope stats.Scope, useTls bool, auth, redisSocketType, redisT
 
 	var client redisClient
 	var err error
+	var isCluster bool
 	ctx := context.Background()
 
 	switch strings.ToLower(redisType) {
 	case "single":
 		logger.Warnf("Creating single with urls %v", url)
 		client, err = poolFunc(ctx, redisSocketType, url)
+		isCluster = false
 	case "cluster":
 		urls := strings.Split(url, ",")
-		if !implicitPipelining {
-			panic(RedisError("Implicit Pipelining must be enabled to work with Redis Cluster Mode. Set values for REDIS_PIPELINE_WINDOW or REDIS_PIPELINE_LIMIT to enable implicit pipelining"))
-		}
 		logger.Warnf("Creating cluster with urls %v", urls)
 		clusterConfig := radix.ClusterConfig{
 			PoolConfig: poolConfig,
 		}
 		client, err = clusterConfig.New(ctx, urls)
+		isCluster = true
 	case "sentinel":
 		urls := strings.Split(url, ",")
 		if len(urls) < 2 {
@@ -219,6 +206,7 @@ func NewClientImpl(scope stats.Scope, useTls bool, auth, redisSocketType, redisT
 			SentinelDialer: sentinelDialer,
 		}
 		client, err = sentinelConfig.New(ctx, urls[0], urls[1:])
+		isCluster = false
 	default:
 		panic(RedisError("Unrecognized redis type " + redisType))
 	}
@@ -233,9 +221,9 @@ func NewClientImpl(scope stats.Scope, useTls bool, auth, redisSocketType, redisT
 	}
 
 	return &clientImpl{
-		client:             client,
-		stats:              stats,
-		implicitPipelining: implicitPipelining,
+		client:    client,
+		stats:     stats,
+		isCluster: isCluster,
 	}
 }
 
@@ -266,16 +254,7 @@ func (c *clientImpl) PipeAppend(pipeline Pipeline, rcv interface{}, cmd, key str
 
 func (c *clientImpl) PipeDo(pipeline Pipeline) error {
 	ctx := context.Background()
-	if c.implicitPipelining {
-		for _, action := range pipeline {
-			if err := c.client.Do(ctx, action); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-
-	// In v4, create a new pipeline and append all actions
+	// Use explicit pipelining in v4
 	p := radix.NewPipeline()
 	for _, action := range pipeline {
 		p.Append(action)
@@ -283,6 +262,13 @@ func (c *clientImpl) PipeDo(pipeline Pipeline) error {
 	return c.client.Do(ctx, p)
 }
 
-func (c *clientImpl) ImplicitPipeliningEnabled() bool {
-	return c.implicitPipelining
+func (c *clientImpl) IsCluster() bool {
+	return c.isCluster
+}
+
+func (c *clientImpl) GetSlot(key string) uint16 {
+	if !c.isCluster {
+		return 0
+	}
+	return radix.ClusterSlot([]byte(key))
 }
